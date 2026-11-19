@@ -3,6 +3,13 @@ on:
   schedule:
     - cron: '6,26,46 * * * *'
   workflow_dispatch:
+    inputs:
+      start:
+        description: 'Backfill from this UTC date (YYYY-MM-DD). Leave blank for the last 7 days.'
+        required: false
+      end:
+        description: 'Backfill through this UTC date (YYYY-MM-DD). Leave blank for now.'
+        required: false
 permissions:
   contents: write
 concurrency:
@@ -11,7 +18,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Trust KSC intermediate certificate (verified against system roots)
@@ -25,10 +32,13 @@ jobs:
           cat /etc/ssl/certs/ca-certificates.crt "$dir/issuer.pem" > "$dir/bundle.pem"
           echo "SSL_CERT_FILE=$dir/bundle.pem" >> "$GITHUB_ENV"
       - name: Collect
+        env:
+          KSC_BACKFILL_START: ${{ github.event.inputs.start }}
+          KSC_BACKFILL_END: ${{ github.event.inputs.end }}
         run: python3 scripts/collect_ksc.py
       - name: Commit
         run: |
           git config user.name "ksc-rain-collector"
           git config user.email "actions@users.noreply.github.com"
-          git add data/ksc_rain.json
+          git add data/ksc_rain.json data/ksc_export_debug.txt 2>/dev/null || git add data/ksc_rain.json
           git diff --cached --quiet || (git commit -m "KSC rain gauges $(date -u +%Y-%m-%dT%H:%MZ)" && git push)
