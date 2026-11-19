@@ -385,7 +385,7 @@ function drawPoints(o) {
   if ($('lyA').checked) for (const f of S.alerts) { if (!f.geometry) continue; const col = alertColor(f.properties.event); L.geoJSON(f, { pane: 'alerts', style: { color: col, weight: 2.5, fillColor: col, fillOpacity: 0.07, dashArray: /Watch|Advisory/.test(f.properties.event) ? '6 5' : null }, interactive: false }).addTo(o.alerts); }
   {
     const z = o.map.getZoom();
-    for (const g of [...S.gauges.values()].filter(g => S.nets[g.net]).sort((x, y) => (x.total || 0) - (y.total || 0))) {
+    for (const g of [...S.gauges.values()].filter(g => S.nets[g.net] && !(g.suspect && $('hideSus').checked)).sort((x, y) => (x.total || 0) - (y.total || 0))) {
       const v = gaugeShown(g); if (v == null) continue; const col = colorFor(v) || '#eef3f8', part = g.flags.some(f => f.k === 'partial');
       const lab = (g.key && z >= 9.5 ? g.id + ' ' : '') + v.toFixed(2);
       const icon = L.divIcon({ className: '', html: `<div class="gm${g.key ? ' key' : ''}${g.suspect ? ' sus' : ''}${part ? ' part' : ''}" style="background:${col};color:${inkFor(col)}">${g.suspect ? (g.key ? g.id + ' ?' : '?') : lab}</div>`, iconSize: [g.key ? 74 : 40, 22], iconAnchor: [g.key ? 82 : 20, 11] });
@@ -394,7 +394,7 @@ function drawPoints(o) {
   }
   {
     const placed = [], hit = b => placed.some(q => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]);
-    for (const g of S.gauges.values()) { if (!S.nets[g.net] || gaugeShown(g) == null) continue; const q = o.map.latLngToContainerPoint([g.lat, g.lon]); placed.push(g.key ? [q.x - 84, q.y - 12, q.x - 6, q.y + 12] : [q.x - 22, q.y - 12, q.x + 22, q.y + 12]); }
+    for (const g of S.gauges.values()) { if (!S.nets[g.net] || gaugeShown(g) == null || (g.suspect && $('hideSus').checked)) continue; const q = o.map.latLngToContainerPoint([g.lat, g.lon]); placed.push(g.key ? [q.x - 84, q.y - 12, q.x - 6, q.y + 12] : [q.x - 22, q.y - 12, q.x + 22, q.y + 12]); }
     for (const p of shownPoi()) {
       const v = poiMrms(p), txt = p[0] + (v != null ? ' ' + v.toFixed(2) + '"' : ''), w = txt.length * 6.6 + 16, pt = o.map.latLngToContainerPoint([p[2], p[3]]);
       const R = [pt.x + 8, pt.y - 10, pt.x + 12 + w, pt.y + 10], Lf = [pt.x - 12 - w, pt.y - 10, pt.x - 8, pt.y + 10], side = !hit(R) ? 'r' : !hit(Lf) ? 'l' : '';
@@ -446,7 +446,7 @@ function renderMaps() {
   const bar = (Lv, Cs, title, lead) => `<div class="lgwrap"><div class="small muted">${title}</div><div class="lgbar">${Cs.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="lgticks">${lead ? '<span></span>' : ''}${Lv.map(v => `<span>${v}</span>`).join('')}${lead ? '' : ''}</div></div>`;
   if (types.some(t => t !== 'diff' && t !== 'none' && !IEMT[t]) || Object.values(S.nets).some(Boolean)) h += bar(LEVELS.slice(1), COLORS, 'Rainfall, inches (each color starts at the value under its left edge; first band starts at 0.01")', true);
   if (types.includes('diff')) h += bar(DLEVELS, DCOLORS, 'MRMS minus gauges, inches', true);
-  h += `<div class="small muted" style="min-width:210px">Click the map for values at any point · Pills = gauge totals · <span style="border:1px dashed currentColor;border-radius:8px;padding:0 5px">?</span> = gauge likely not reporting · ◆ pads ● airfields</div>`;
+  h += `<div class="small muted" style="min-width:210px">Click the map for values at any point · Pills = gauge totals · ${$('hideSus').checked ? `${[...S.gauges.values()].filter(g => S.nets[g.net] && g.suspect).length} non-reporting gauges hidden` : '<span style="border:1px dashed currentColor;border-radius:8px;padding:0 5px">?</span> = gauge likely not reporting'} · ◆ pads ● airfields</div>`;
   $('legend').innerHTML = h;
 }
 
@@ -613,7 +613,8 @@ function init() {
   $('btnTheme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; store.set('theme', t); $('btnTheme').textContent = t === 'dark' ? 'Light' : 'Dark'; };
   $('btnCopy').onclick = async () => { const t = briefText(); try { await navigator.clipboard.writeText(t); $('btnCopy').textContent = 'Copied'; } catch (e) { const w = $('tab-sources'); document.querySelector('[data-tab=sources]').click(); w.insertAdjacentHTML('afterbegin', `<div class="box"><h3>Summary (select and copy)</h3><textarea style="min-height:200px">${esc(t)}</textarea></div>`); } setTimeout(() => $('btnCopy').textContent = 'Copy summary', 1500); };
   $('btnCsv').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csvText()], { type: 'text/csv' })); a.download = `space-coast-rainfall_${ymd(S.a)}-${ymd(S.b)}.csv`; document.body.appendChild(a); a.click(); a.remove(); };
-  for (const id of ['rasterA', 'rasterB', 'smooth', 'lyA', 'lyR']) $(id).onchange = renderMaps; $('opac').oninput = renderMaps;
+  for (const id of ['rasterA', 'rasterB', 'smooth', 'lyA', 'lyR']) $(id).onchange = renderMaps;
+  $('hideSus').checked = store.get('hideSus', false); $('hideSus').onchange = () => { store.set('hideSus', $('hideSus').checked); renderMaps(); }; $('opac').oninput = renderMaps;
   $('base').onchange = () => { store.set('base', $('base').value); setBase(M.A, $('base').value); setBase(M.B, $('base').value); };
   $('btnCmp').onclick = () => { const on = $('wrapB').hidden; $('wrapB').hidden = !on; $('grpB').hidden = !on; $('btnCmp').classList.toggle('on', on); M.A.map.invalidateSize(); if (on) { M.B.map.invalidateSize(); M.B.map.setView(M.A.map.getCenter(), M.A.map.getZoom(), { animate: false }); } renderMaps(); };
   $('btnHome').onclick = () => M.A.map.setView([28.53, -80.66], 11); $('btnWide').onclick = () => M.A.map.fitBounds([[CFG.box.s + 0.2, CFG.box.w + 0.3], [CFG.box.n - 0.2, CFG.box.e - 0.1]]);
