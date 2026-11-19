@@ -45,7 +45,7 @@ async function reportMap(sites) {
     for (const g of fullGauges().sort((a, b) => b.total - a.total)) {
       if (!inView(g.lat, g.lon)) continue; const px = X(g.lon) - x0, py = Y(g.lat) - y0, txt = g.total.toFixed(2), w = c.measureText(txt).width + 14, box = [px - w / 2 - 2, py - 13, px + w / 2 + 2, py + 13];
       if (hit(box)) continue; placed.push(box); const col = colorFor(g.total) || '#ffffff';
-      c.fillStyle = col; c.strokeStyle = '#111'; c.lineWidth = 1.6; c.beginPath(); c.roundRect(px - w / 2, py - 11, w, 22, g.key ? 3 : 11); c.fill(); c.stroke(); c.fillStyle = inkFor(col); c.fillText(txt, px, py + 1);
+      c.fillStyle = col; c.strokeStyle = '#111'; c.lineWidth = 1.6; c.beginPath(); if (c.roundRect) c.roundRect(px - w / 2, py - 11, w, 22, g.key ? 3 : 11); else c.rect(px - w / 2, py - 11, w, 22); c.fill(); c.stroke(); c.fillStyle = inkFor(col); c.fillText(txt, px, py + 1);
     }
     c.font = 'bold 15px Helvetica, Arial, sans-serif';
     sites.forEach((p, i) => { if (!inView(p.lat, p.lon)) return; const px = X(p.lon) - x0, py = Y(p.lat) - y0; c.beginPath(); c.arc(px, py, 11.5, 0, 6.3); c.fillStyle = '#10151b'; c.fill(); c.lineWidth = 2; c.strokeStyle = '#fff'; c.stroke(); c.fillStyle = '#fff'; c.fillText(String(i + 1), px, py + 1); });
@@ -141,5 +141,7 @@ async function generateReport() {
   for (const nt of notes) { const lines = doc.splitTextToSize(nt, colW - 4); if (yL + lines.length * 9.6 > PH - 30) break; doc.text(lines, x2, yL + 9); yL += lines.length * 9.6 + 4; }
   footer();
   const stamp = new Date(S.b).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
-  doc.save(`Space-Coast-Rainfall-Report_${stamp}Z_${Math.round(hrs)}h.pdf`);
+  const name = `Space-Coast-Rainfall-Report_${stamp}Z_${Math.round(hrs)}h.pdf`, url = URL.createObjectURL(doc.output('blob'));
+  try { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* download blocked: the caller still offers the link */ }
+  return { name, url };
 }

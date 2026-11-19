@@ -584,7 +584,6 @@ function renderKpis() {
   const dl = [...S.gauges.values()].filter(g => S.nets.DAILY && g.daily && g.total != null); if (dl.length) notes.push(`${dl.length} once-a-day gauges (CoCoRaHS/COOP) are shown as squares. Their totals are 7 AM-to-7 AM readings that fall inside the period, so they are left out of maxima, the gauge analysis and the radar comparison.`);
   const part = [...S.gauges.values()].filter(g => g.flags.some(f => f.k === 'partial')); if (part.length) notes.push(`${part.length} gauge${part.length > 1 ? 's have' : ' has'} data for only part of the period (left out of maxima)`);
   if (S.fellBack && IEMT[$('rasterA').value]) notes.push('MRMS numbers could not be loaded, so the map is showing the IEM reference picture (fixed look-back ending now, IEM colors). Key-site MRMS values are unavailable.');
-  if (S.reportErr) notes.push('The PDF report could not be created: ' + S.reportErr);
   if (S.noBase) notes.push('Background map tiles are blocked on this network (CARTO, OpenStreetMap and Esri were all tried). Rainfall shading, gauges and key sites still plot correctly; only the street/imagery backdrop is missing.');
   const bad = Object.keys(SRC).filter(x => S.src[x] && S.src[x].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(x => SRC[x].split(' (')[0]).join('; ')} — see Sources tab`);
   $('banner').hidden = !notes.length; $('banner').innerHTML = notes.map(esc).join('<br>');
@@ -694,7 +693,17 @@ function init() {
   $('btnBrief').onclick = () => { document.body.classList.toggle('brief'); $('btnBrief').textContent = document.body.classList.contains('brief') ? 'Exit brief mode' : 'Brief mode'; setTimeout(() => { M.A.map.invalidateSize(); M.B.map.invalidateSize(); renderChart(); renderScatter(); }, 60); };
   $('btnTheme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; store.set('theme', t); $('btnTheme').textContent = t === 'dark' ? 'Light' : 'Dark'; };
   $('btnCopy').onclick = async () => { const t = briefText(); try { await navigator.clipboard.writeText(t); $('btnCopy').textContent = 'Copied'; } catch (e) { const w = $('tab-sources'); document.querySelector('[data-tab=sources]').click(); w.insertAdjacentHTML('afterbegin', `<div class="box"><h3>Summary (select and copy)</h3><textarea style="min-height:200px">${esc(t)}</textarea></div>`); } setTimeout(() => $('btnCopy').textContent = 'Copy summary', 1500); };
-  $('btnReport').onclick = async () => { const bn = $('btnReport'); if (bn.disabled) return; bn.disabled = true; bn.textContent = 'Building report…'; try { await generateReport(); bn.textContent = 'Report saved'; } catch (e) { bn.textContent = 'Report failed'; console.error(e); S.reportErr = e.message; renderKpis(); } setTimeout(() => { bn.disabled = false; bn.textContent = 'Report (PDF)'; }, 2500); };
+  $('btnReport').onclick = async () => {
+    const bn = $('btnReport'), bar = $('reportBar'); if (bn.disabled) return; bn.disabled = true; bn.textContent = 'Building report…';
+    bar.hidden = false; bar.className = 'banner reportbar'; bar.textContent = 'Building the PDF report — this can take up to 20 seconds while the map is drawn…';
+    try {
+      if (typeof generateReport !== 'function') throw Error('the report script did not load — hard-refresh the page (Ctrl+Shift+R) and try again');
+      const r = await generateReport();
+      bar.innerHTML = `<span>Report ready: <b>${esc(r.name)}</b>. It was sent to your Downloads folder.</span><a href="${r.url}" target="_blank" rel="noopener">Open the report in a new tab</a><a href="${r.url}" download="${esc(r.name)}">Download again</a><button id="reportClose">Dismiss</button>`;
+      $('reportClose').onclick = () => { bar.hidden = true; };
+    } catch (e) { console.error(e); bar.className = 'banner reportbar err'; bar.textContent = 'The PDF report could not be created: ' + (e && e.message ? e.message : e); }
+    bn.disabled = false; bn.textContent = 'Report (PDF)';
+  };
   $('btnCsv').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csvText()], { type: 'text/csv' })); a.download = `space-coast-rainfall_${ymd(S.a)}-${ymd(S.b)}.csv`; document.body.appendChild(a); a.click(); a.remove(); };
   for (const id of ['rasterA', 'rasterB', 'smooth', 'lyA', 'lyR']) $(id).onchange = renderMaps;
   $('hideSus').checked = store.get('hideSus', false); $('hideSus').onchange = () => { store.set('hideSus', $('hideSus').checked); renderMaps(); }; $('opac').oninput = renderMaps;

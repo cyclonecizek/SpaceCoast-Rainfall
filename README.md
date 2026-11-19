@@ -19,7 +19,7 @@ Static dashboard (no build step, no server). Open `index.html`, or publish the f
 | Airfield gauges (KTTS, KXMR, KCOF, KTIX, KMLB + every other ASOS/AWOS IEM lists inside the map box) | Iowa Environmental Mesonet `asos.py`; api.weather.gov fills any station IEM does not return | browser |
 | KSC/CCSFS tipping-bucket gauges | Spaceport Weather Data Archive "Past 24 Hour" rainfall page | GitHub Action (the archive does not allow browser requests), or paste the table in the **Sources** tab |
 | USGS precipitation gauges | USGS NWIS instantaneous values | browser |
-| CoCoRaHS daily gauges | CoCoRaHS data export, six counties (GitHub Action → `data/cocorahs.json`); IEM daily summaries if that file is missing | Action, browser fallback |
+| CoCoRaHS daily gauges | CoCoRaHS data export, six counties (Brevard = `BV`) (GitHub Action → `data/cocorahs.json`); IEM daily summaries if that file is missing | Action, browser fallback |
 | NWS COOP daily gauges | Iowa Environmental Mesonet daily summaries | browser |
 | Flood watches / warnings | api.weather.gov | browser |
 

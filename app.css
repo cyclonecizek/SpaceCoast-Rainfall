@@ -77,3 +77,5 @@ body.brief .range,body.brief .mapbar:not(#filters),body.brief #filters .muted,bo
 body.brief .maps{height:calc(100vh - 250px);min-height:520px}body.brief .side{max-height:calc(100vh - 190px)}
 @media(max-width:1250px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.charts{grid-template-columns:1fr}.side{max-height:560px}}
 @media print{.range,.mapbar,.timeline,.tools,.tabs{display:none}.grid{grid-template-columns:1fr}.side{max-height:none}.tab{display:block!important}body{background:#fff}}
+
+.reportbar{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent);display:flex;gap:12px;align-items:center;flex-wrap:wrap}.reportbar a{color:var(--acc);font-weight:650}.reportbar.err{border-color:var(--crit);background:color-mix(in srgb,var(--crit) 14%,transparent)}
