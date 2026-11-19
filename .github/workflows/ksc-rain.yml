@@ -1,0 +1,34 @@
+name: Collect KSC rain gauges
+on:
+  schedule:
+    - cron: '6,26,46 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: ksc-rain
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trust KSC intermediate certificate (verified against system roots)
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/ksc-certs"; mkdir -p "$dir"
+          curl --fail --silent --show-error --location --max-time 30 --retry 2 \
+            'http://crt.sectigo.com/EntrustDVTLSIssuingRSACA2.crt' --output "$dir/issuer.der"
+          openssl x509 -inform DER -in "$dir/issuer.der" -out "$dir/issuer.pem"
+          openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt "$dir/issuer.pem"
+          cat /etc/ssl/certs/ca-certificates.crt "$dir/issuer.pem" > "$dir/bundle.pem"
+          echo "SSL_CERT_FILE=$dir/bundle.pem" >> "$GITHUB_ENV"
+      - name: Collect
+        run: python3 scripts/collect_ksc.py
+      - name: Commit
+        run: |
+          git config user.name "ksc-rain-collector"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ksc_rain.json
+          git diff --cached --quiet || (git commit -m "KSC rain gauges $(date -u +%Y-%m-%dT%H:%MZ)" && git push)
