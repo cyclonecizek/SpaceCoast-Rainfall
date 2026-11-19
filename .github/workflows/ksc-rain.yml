@@ -36,9 +36,12 @@ jobs:
           KSC_BACKFILL_START: ${{ github.event.inputs.start }}
           KSC_BACKFILL_END: ${{ github.event.inputs.end }}
         run: python3 scripts/collect_ksc.py
+      - name: Collect CoCoRaHS daily reports
+        continue-on-error: true
+        run: python3 scripts/collect_cocorahs.py
       - name: Commit
         run: |
           git config user.name "ksc-rain-collector"
           git config user.email "actions@users.noreply.github.com"
-          git add data/ksc_rain.json data/ksc_export_debug.txt 2>/dev/null || git add data/ksc_rain.json
+          git add -A data
           git diff --cached --quiet || (git commit -m "KSC rain gauges $(date -u +%Y-%m-%dT%H:%MZ)" && git push)
