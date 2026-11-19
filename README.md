@@ -6,8 +6,9 @@ Static dashboard (no build step, no server). Open `index.html`, or publish the f
 
 1. Create a repository and upload everything in this folder (keep the `.github` folder).
 2. **Settings → Pages → Build and deployment → Deploy from a branch → `main` / root.**
-3. **Actions → Collect KSC rain gauges → Run workflow** once. After that it runs every 20 minutes and
-   commits `data/ksc_rain.json`, which the page reads automatically.
+3. **Actions → Collect KSC rain gauges → Run workflow** once. That run collects every 5 minutes for about
+   5 hours, then starts its own replacement, so one click keeps it going. Data is committed to a separate
+   `data` branch, which the page reads directly (set `dataRepo` at the top of `app.js` to `owner/repo`).
    (If the repo is under an organization, make sure Actions has *Read and write* workflow permissions.)
 
 ## What loads from where
@@ -25,7 +26,7 @@ Static dashboard (no build step, no server). Open `index.html`, or publish the f
 Any custom period works for MRMS and the airfield gauges straight away. KSC gauges cover whatever hours
 have been collected. Three ways to get them:
 
-1. **Collector (automatic)** — every 20 minutes the GitHub Action reads the archive's Past 24 Hour page for
+1. **Collector (automatic)** — every 5 minutes the GitHub Action reads the archive's Past 24 Hour page for
    the newest hours and backfills anything older from the archive's *Search Rain Gauges* export (per-tip
    records summed to hours). By default it keeps the last 7 days complete.
 2. **Any other period** — Actions → *Collect KSC rain gauges* → **Run workflow**, and enter start and end

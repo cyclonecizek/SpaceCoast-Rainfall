@@ -16,6 +16,7 @@ const CFG = {
   nws: 'https://api.weather.gov/',
   usgs: 'https://waterservices.usgs.gov/nwis/iv/',
   cartoKey: 'cb1_4mcb_1_ac7cc0264756a5776d9ea703',            // CARTO basemap key (free; request at carto.com/basemaps/apikey)
+  dataRepo: 'cyclonecizek/SpaceCoast-Rainfall',                // collector commits to this repo's "data" branch
   kscJson: 'data/ksc_rain.json',
   cocoJson: 'data/cocorahs.json',
   dailyNets: [['CoCoRaHS', ['FL_COCORAHS', 'FLCOCORAHS']], ['COOP', ['FL_COOP']]],   // IEM network ids tried in order
@@ -180,9 +181,17 @@ function parseKscTable(text, nowMs = Date.now()) {
   if (!rows) throw Error('No gauge rows found under the header.');
   return { hourly: out, rows, asof: asof || null, first: last - (hours.length - 1) * H, last };
 }
+/* Collector files: prefer the live "data" branch (updated every 5 minutes), fall back to the copy published with the site. */
+async function collectorJson(name, localPath) {
+  const urls = [`https://raw.githubusercontent.com/${CFG.dataRepo}/data/${name}?t=${Math.floor(Date.now() / 120000)}`, `${localPath}?t=${Math.floor(Date.now() / 60000)}`];
+  const got = (await Promise.allSettled(urls.map(u => getJson(u, 15000)))).filter(r => r.status === 'fulfilled' && r.value).map(r => r.value);
+  if (!got.length) throw Error('not found');
+  return got.sort((x, y) => Date.parse(y.updated || 0) - Date.parse(x.updated || 0))[0];
+}
 async function loadKSC() {
   let remote = {}, note = '';
-  try { const j = await getJson(CFG.kscJson + '?t=' + Math.floor(Date.now() / 60000), 15000); remote = j.hourly || {}; note = `collector file updated ${j.updated ? fmt(Date.parse(j.updated)) : 'unknown'}`; }
+  let age = null;
+  try { const j = await collectorJson('ksc_rain.json', CFG.kscJson); remote = j.hourly || {}; age = j.updated ? (Date.now() - Date.parse(j.updated)) / 60000 : null; note = `collector last ran ${j.updated ? fmt(Date.parse(j.updated)) : 'unknown'}${j.page_as_of ? `, archive page as of ${fmt(Date.parse(j.page_as_of))}` : ''}`; }
   catch (e) { note = 'collector file not found (' + e.message + ')'; }
   const merged = {}; for (const src of [S.kscLocal, remote]) for (const k in src) merged[k] = Object.assign(merged[k] || {}, src[k]);
   const hours = Object.keys(merged).sort(); if (!hours.length) { setSrc('ksc', 'warn', `No KSC gauge data yet — ${note}. Paste the archive table below, or enable the collector.`, CFG.kscPage); return; }
@@ -192,7 +201,8 @@ async function loadKSC() {
     for (const h of hours) { const v = merged[h][id]; if (v == null) continue; const t = Date.parse(h); if (!series.length) series.push({ t, c: 0 }); c += v; series.push({ t: t + H, c }); }
     addGauge({ id: 'RG' + String(id).padStart(2, '0'), name: `KSC rain gauge ${id}`, lat: ll[0], lon: ll[1], net: 'KSC', src: 'KSC archive', series, hourly: true });
   }
-  setSrc('ksc', 'ok', `${ids.size} gauges · hourly data ${fmt(Date.parse(hours[0]))} → ${fmt(Date.parse(hours[hours.length - 1]) + H)} · ${note}`, CFG.kscPage);
+  S.kscAge = age; const late = age != null && age > 40;
+  setSrc('ksc', late ? 'warn' : 'ok', `${late ? `Collector has not updated for ${age >= 120 ? (age / 60).toFixed(1) + ' h' : Math.round(age) + ' min'} — check the Actions tab. ` : ''}${ids.size} gauges · hourly data ${fmt(Date.parse(hours[0]))} → ${fmt(Date.parse(hours[hours.length - 1]) + H)} · ${note}`, CFG.kscPage);
 }
 async function loadUSGS(a, b) {
   const bx = CFG.box, url = `${CFG.usgs}?format=json&bBox=${bx.w.toFixed(3)},${bx.s.toFixed(3)},${bx.e.toFixed(3)},${bx.n.toFixed(3)}&parameterCd=00045&startDT=${new Date(a - H).toISOString().slice(0, 16)}Z&endDT=${new Date(b).toISOString().slice(0, 16)}Z&siteStatus=active`;
@@ -217,7 +227,7 @@ async function loadDaily(a, b) {
   // 1) CoCoRaHS reports gathered by the collector (exact reading times)
   let haveCoco = false;
   try {
-    const j = await getJson(CFG.cocoJson + '?t=' + Math.floor(Date.now() / 600000), 15000), by = {};
+    const j = await collectorJson('cocorahs.json', CFG.cocoJson), by = {};
     for (const r of j.reports || []) { const t = Date.parse(r.t); if (t < a - 26 * H || t > b + H || !inBox(r.lat, r.lon)) continue; (by[r.id] = by[r.id] || { r, list: [] }).list.push({ t, v: r.in }); }
     let n = 0; for (const id in by) n += addDaily(id, `CoCoRaHS ${by[id].r.name || id}`, by[id].r.lat, by[id].r.lon, 'CoCoRaHS', by[id].list);
     if (n) { haveCoco = true; total += n; notes.push(`CoCoRaHS ${n} stations (collector, updated ${j.updated ? fmt(Date.parse(j.updated)) : '?'})`); }
@@ -556,6 +566,7 @@ function renderKpis() {
   const notes = [];
   if (S.mrms && Math.abs(S.mrms.a - S.a) + Math.abs(S.mrms.b - S.b) > 20 * 60000) notes.push(`MRMS covers whole hours ${fmt(S.mrms.a)} → ${fmt(S.mrms.b)}; gauge totals cover the exact period. Radar-vs-gauge comparisons use the MRMS hours.`);
   if (s.sus.length) notes.push(`${s.sus.length} gauge${s.sus.length > 1 ? 's' : ''} read zero while radar or neighbors show rain (${s.sus.slice(0, 8).map(g => g.id).join(', ')}${s.sus.length > 8 ? '…' : ''}) — ${S.excludeSuspect ? 'left out of maxima and analysis' : 'included'}`);
+  if (S.kscAge != null && S.kscAge > 40 && S.b > Date.now() - 2 * H) notes.push(`KSC gauge data is ${S.kscAge >= 120 ? (S.kscAge / 60).toFixed(1) + ' hours' : Math.round(S.kscAge) + ' minutes'} old — the collector has stopped updating. KSC totals do not include the most recent rain.`);
   const dl = [...S.gauges.values()].filter(g => S.nets.DAILY && g.daily && g.total != null); if (dl.length) notes.push(`${dl.length} once-a-day gauges (CoCoRaHS/COOP) are shown as squares. Their totals are 7 AM-to-7 AM readings that fall inside the period, so they are left out of maxima, the gauge analysis and the radar comparison.`);
   const part = [...S.gauges.values()].filter(g => g.flags.some(f => f.k === 'partial')); if (part.length) notes.push(`${part.length} gauge${part.length > 1 ? 's have' : ' has'} data for only part of the period (left out of maxima)`);
   if (S.fellBack && IEMT[$('rasterA').value]) notes.push('MRMS numbers could not be loaded, so the map is showing the IEM reference picture (fixed look-back ending now, IEM colors). Key-site MRMS values are unavailable.');

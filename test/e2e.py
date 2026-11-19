@@ -62,6 +62,7 @@ def handle(route):
         log.append(u.split('/')[-1])
         if 'Pass2' in u: return route.fulfill(status=404,body='nope')
         return route.fulfill(body=GRIB,content_type='application/octet-stream')
+    if 'raw.githubusercontent.com' in u: return route.fulfill(status=404,body='x')
     if 'ksc_rain.json' in u: return route.fulfill(body=ksc_json(),content_type='application/json')
     if 'localhost' in u: return route.continue_()
     return route.fulfill(body=TILE,content_type='image/png')

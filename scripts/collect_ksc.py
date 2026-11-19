@@ -14,7 +14,7 @@ set SSL_CERT_FILE to a bundle that includes KSC's intermediate certificate (the 
 import datetime as dt, html.parser, json, os, re, ssl, sys, urllib.request
 
 URL = "https://kscweather.ksc.nasa.gov/wxarchive/Rainfall/Past24hr"
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "ksc_rain.json")
+OUT = os.path.join(os.environ.get("DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"), "ksc_rain.json")
 KEEP_DAYS = 120
 MONTHS = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
 

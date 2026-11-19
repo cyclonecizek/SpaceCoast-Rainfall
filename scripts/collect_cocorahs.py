@@ -8,7 +8,7 @@ If the export changes shape, the response is saved to data/cocorahs_debug.txt an
 import csv, datetime as dt, io, json, os, sys, urllib.parse, urllib.request
 from zoneinfo import ZoneInfo
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "cocorahs.json")
+OUT = os.path.join(os.environ.get("DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"), "cocorahs.json")
 DEBUG = os.path.join(os.path.dirname(OUT), "cocorahs_debug.txt")
 BASE = "https://data.cocorahs.org/export/exportreports.aspx"
 COUNTIES = os.environ.get("COCORAHS_COUNTIES", "BR,VL,IR,OR,SM,OS").split(",")   # Brevard, Volusia, Indian River, Orange, Seminole, Osceola
