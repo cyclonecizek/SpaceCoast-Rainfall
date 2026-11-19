@@ -41,7 +41,6 @@ GRIB=open(ROOT+'/test/sample.grib2.gz','rb').read()
 log=[]
 def handle(route):
     u=route.request.url
-    if 'cdnjs.cloudflare.com' in u: return route.fulfill(path=LF+('leaflet.css' if u.endswith('.css') else 'leaflet.js'))
     if 'asos.py' in u: log.append(u); return route.fulfill(body=iem_csv(),content_type='text/plain')
     if 'tile.py' in u: return route.abort()
     if 'api.weather.gov/alerts' in u: return route.fulfill(body=ALERTS,content_type='application/geo+json')
@@ -67,6 +66,11 @@ with sync_playwright() as p:
     print('gauges',pg.evaluate("[...S.gauges.values()].filter(g=>g.net!='KSC').map(g=>g.id+' '+g.src+' '+(g.total==null?'-':g.total.toFixed(2))+(g.suspect?' SUS':'')+' '+g.flags.map(f=>f.k)).join(' | ')"))
     print('ksc',pg.evaluate("[...S.gauges.values()].filter(g=>g.net=='KSC').map(g=>g.id+' '+g.total.toFixed(2)+(g.suspect?' SUS':'')).join(' | ')"))
     print(pg.evaluate("briefText()"))
+    pg.click('#filters button[data-net="KSC"]'); pg.wait_for_timeout(400)
+    print('KSC only ->',pg.evaluate("[S.nets, stats().top.id, document.querySelectorAll('#tab-gauges tr.row').length, document.querySelectorAll('#mapA .gm').length]"))
+    pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(400); pg.screenshot(path='/tmp/f1.png')
+    print('air only ->',pg.evaluate("[S.kinds, document.querySelectorAll('#tab-sites tr.row').length]"))
+    pg.click('#filters button[data-net="KSC"]'); pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(300); print('reset ->',pg.evaluate('[S.nets,S.kinds]'))
     # 72 h preset, compare mode, hourly timeline
     pg.click('#presets button[data-h="72"]'); pg.wait_for_function("S.loadedAt>0 && S.mrms && (S.mrms.b-S.mrms.a)>70*36e5",timeout=90000)
     print('72h parts',pg.evaluate("S.mrms.parts.map(p=>p.hours).join('+')"))

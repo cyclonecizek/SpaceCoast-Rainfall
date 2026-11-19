@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Space Coast Rainfall — Flood Situational Awareness</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -57,16 +57,19 @@
       </div>
       <div class="grp"><span class="lbl">Opacity</span><input type="range" id="opac" min="20" max="100" value="78"></div>
       <label class="chk"><input type="checkbox" id="smooth" checked> Smooth</label>
-      <label class="chk"><input type="checkbox" id="lyG" checked> Gauges</label>
-      <label class="chk"><input type="checkbox" id="lyP" checked> Key sites</label>
       <label class="chk"><input type="checkbox" id="lyA" checked> Flood alerts</label>
       <label class="chk"><input type="checkbox" id="lyR"> Live radar</label>
       <div class="grp"><span class="lbl">Basemap</span>
-        <select id="base"><option value="dark">Dark</option><option value="light">Light</option><option value="sat">Imagery</option><option value="osm">Streets</option></select>
+        <select id="base"><option value="dark">Dark</option><option value="light">Light</option><option value="voyager">Voyager</option><option value="sat">Imagery</option><option value="osm">Streets</option></select>
       </div>
       <button id="btnCmp" title="Two synced maps side by side">Compare</button>
       <button id="btnHome" title="Zoom to the Cape">Cape</button>
       <button id="btnWide" title="Zoom to the region">Region</button>
+    </div>
+    <div class="mapbar" id="filters">
+      <div class="grp"><span class="lbl">Gauges</span><div class="seg"><button data-net="*">All</button><button data-net="ASOS">Airfields only</button><button data-net="KSC">KSC / CCSFS only</button><button data-net="USGS">USGS only</button></div></div>
+      <div class="grp"><span class="lbl">Key sites</span><div class="seg"><button data-kind="*">All</button><button data-kind="pad">Launch pads</button><button data-kind="air">Airfields</button><button data-kind="ops">Operations</button></div></div>
+      <span class="muted small">Applies to the map, tables, headline numbers and comparison. Shift-click to combine groups.</span>
     </div>
     <div class="maps" id="maps">
       <div class="mapwrap"><div id="mapA" class="map"></div><div class="maptag" id="tagA"></div></div>
@@ -111,7 +114,7 @@
 <footer class="foot" id="foot"></footer>
 <div id="tip" class="tip" hidden></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="mrms.js"></script>
 <script src="app.js"></script>
 </body>

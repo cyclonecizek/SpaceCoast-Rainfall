@@ -15,6 +15,7 @@ const CFG = {
   iem: 'https://mesonet.agron.iastate.edu/',
   nws: 'https://api.weather.gov/',
   usgs: 'https://waterservices.usgs.gov/nwis/iv/',
+  cartoKey: 'cb1_4mcb_1_ac7cc0264756a5776d9ea703',            // CARTO basemap key (free; request at carto.com/basemaps/apikey)
   kscJson: 'data/ksc_rain.json',
   kscPage: 'https://kscweather.ksc.nasa.gov/wxarchive/Rainfall/Past24hr',
   alertCounties: /Brevard|Volusia|Indian River|Orange|Seminole|Osceola/i,
@@ -80,6 +81,7 @@ const S = {
   product: store.get('product', 'auto'), gauges: new Map(), mrms: null, hourly: null, idw: null, diff: null,
   alerts: [], src: {}, sel: store.get('sel', null), poi: store.get('poi', null) || POI_DEFAULT, excludeSuspect: true, loadId: 0, loadedAt: 0,
   kscLocal: store.get('ksc', {}), tl: -1,
+  nets: Object.assign({ ASOS: true, KSC: true, USGS: true }, store.get('nets', {})), kinds: Object.assign({ pad: true, air: true, ops: true }, store.get('kinds', {})),
 };
 const SRC = { iem: 'ASOS/AWOS gauges (Iowa Environmental Mesonet)', nws: 'ASOS/AWOS backup (api.weather.gov)', ksc: 'KSC/CCSFS rain gauges (Spaceport Weather Archive)', usgs: 'USGS precipitation gauges', mrms: 'MRMS radar rainfall (NOAA Open Data, AWS)', alerts: 'NWS watches / warnings / advisories' };
 function setSrc(k, state, detail, url) { S.src[k] = { state, detail, url, t: Date.now() }; renderSources(); }
@@ -147,6 +149,15 @@ function parseKscTable(text, nowMs = Date.now()) {
   if (hours.length < 2) throw Error('No hourly columns found.');
   // last column = most recent occurrence of that clock hour at or before "as of" (or now)
   const ref = asof || nowMs; let last = Math.floor(ref / H) * H; while (new Date(last).getUTCHours() !== hours[hours.length - 1]) last -= H;
+  if (!asof) {   // "rainfall for a specific date" report: one calendar day, 00:00 … 23:00, date printed on the page
+    const days = new Set(); let d;
+    const r1 = /\b(\d{1,2})-([A-Za-z]{3})-(\d{4})\b/g, r2 = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g;
+    while ((d = r1.exec(text))) { const t = Date.parse(`${d[1]} ${d[2]} ${d[3]} 00:00:00 UTC`); if (isFinite(t)) days.add(t); }
+    while ((d = r2.exec(text))) { const t = Date.UTC(+d[3], +d[1] - 1, +d[2]); if (isFinite(t)) days.add(t); }
+    const cand = [...days].filter(t => t <= nowMs && t > nowMs - 400 * 24 * H);
+    if (hours[0] === 0 && hours.length === 24 && cand.length === 1) last = cand[0] + 23 * H;
+    else if (hours[0] === 0 && hours.length === 24 && cand.length > 1) throw Error('Found more than one date in the pasted text — paste one daily report at a time.');
+  }
   const out = {}; let rows = 0;
   for (const l of lines.slice(hi + 1)) {
     const c = split(l); if (!/^\d{1,2}$/.test(c[0])) continue; const vals = c.slice(1, 1 + hours.length).map(Number); if (vals.length < hours.length || vals.some(v => !isFinite(v))) continue; rows++;
@@ -204,7 +215,8 @@ function qcGauges() {
     if (g.suspect) g.flags.push({ k: 'suspect', t: `Reports ${g.total.toFixed(2)}" while ${g.mrms != null ? `radar estimates ${g.mrms.toFixed(2)}"` : ''}${med != null ? ` nearby gauges have ~${med.toFixed(2)}"` : ''} — likely not reporting` });
   }
 }
-const goodGauges = () => [...S.gauges.values()].filter(g => g.total != null && !(S.excludeSuspect && g.suspect));
+const goodGauges = () => [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null && !(S.excludeSuspect && g.suspect));
+const shownPoi = () => S.poi.filter(p => S.kinds[p[1]]);
 const fullGauges = () => goodGauges().filter(g => !g.flags.some(f => f.k === 'partial'));
 
 /* ───────────────────────── MRMS ───────────────────────── */
@@ -319,12 +331,13 @@ function rasterCanvas(g, data, L, C, smooth) {
 
 /* ───────────────────────── maps ───────────────────────── */
 const BASES = {
-  dark: ['https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', '© OpenStreetMap © CARTO'],
-  light: ['https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', '© OpenStreetMap © CARTO'],
+  dark: ['https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key=' + CFG.cartoKey, '© OpenStreetMap contributors © CARTO'],
+  light: ['https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png?key=' + CFG.cartoKey, '© OpenStreetMap contributors © CARTO'],
+  voyager: ['https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=' + CFG.cartoKey, '© OpenStreetMap contributors © CARTO'],
   sat: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 'Imagery © Esri'],
   osm: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap'],
 };
-const LABELS = 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png';
+const LABELS = 'https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=' + CFG.cartoKey;
 const RASTERS = [['mrms', 'MRMS radar-estimated rainfall'], ['idw', 'Gauge analysis (interpolated gauges)'], ['diff', 'MRMS minus gauges (difference)'], ['peak', 'Peak 1-hour rainfall (MRMS, needs hourly timeline)'], ['iem24', 'Reference: IEM MRMS image, last 24 h'], ['iem48', 'Reference: IEM MRMS image, last 48 h'], ['iem72', 'Reference: IEM MRMS image, last 72 h'], ['none', 'No rainfall shading']];
 const IEMT = { iem24: 'q2-p24h', iem48: 'q2-p48h', iem72: 'q2-p72h' };
 const M = {};
@@ -336,7 +349,9 @@ function makeMap(key) {
 }
 let syncing = false;
 function syncMaps(from, to) { from.map.on('move', () => { if (syncing || $('wrapB').hidden) return; syncing = true; to.map.setView(from.map.getCenter(), from.map.getZoom(), { animate: false }); syncing = false; }); }
-function setBase(o, name) { if (o.base) o.map.removeLayer(o.base); if (o.labels) { o.map.removeLayer(o.labels); o.labels = null; } const b = BASES[name]; o.base = L.tileLayer(b[0], { attribution: b[1], maxZoom: 18, subdomains: 'abcd' }).addTo(o.map); if (name === 'sat') o.labels = L.tileLayer(LABELS, { pane: 'lab', maxZoom: 18, subdomains: 'abcd' }).addTo(o.map); }
+function setBase(o, name) { clearTimeout(o.baseTimer); let ok = 0, bad = 0; const order = ['dark', 'osm', 'sat', 'light'];
+  o.baseTimer = setTimeout(() => { if (!ok && bad && o === M.A) { const nxt = order[(order.indexOf(name) + 1) % order.length]; S.tried = (S.tried || 0) + 1; if (S.tried < order.length) { $('base').value = nxt; setBase(M.A, nxt); setBase(M.B, nxt); } else { S.noBase = true; renderKpis(); } } }, 6000);
+  if (o.base) o.map.removeLayer(o.base); if (o.labels) { o.map.removeLayer(o.labels); o.labels = null; } const b = BASES[name]; o.base = L.tileLayer(b[0], { attribution: b[1], maxZoom: 18, subdomains: 'abcd' }).on('tileload', () => { ok++; }).on('tileerror', () => { bad++; }).addTo(o.map); if (name === 'sat') o.labels = L.tileLayer(LABELS, { pane: 'lab', maxZoom: 18, subdomains: 'abcd' }).addTo(o.map); }
 function shownEnd() { return S.hourly && S.tl >= 0 && S.tl < S.hourly.n - 1 ? S.hourly.a + (S.tl + 1) * H : null; }
 function gaugeShown(g) { const t = shownEnd(); if (t == null) return g.total; const c1 = cumAt(g.series, t), c0 = cumAt(g.series, S.a); return c1 == null ? null : c1 - (c0 || 0); }
 function rasterFor(type) {
@@ -367,19 +382,19 @@ function drawRaster(o, type) {
 function drawPoints(o) {
   o.gauges.clearLayers(); o.pois.clearLayers(); o.alerts.clearLayers();
   if ($('lyA').checked) for (const f of S.alerts) { if (!f.geometry) continue; const col = alertColor(f.properties.event); L.geoJSON(f, { pane: 'alerts', style: { color: col, weight: 2.5, fillColor: col, fillOpacity: 0.07, dashArray: /Watch|Advisory/.test(f.properties.event) ? '6 5' : null } }).bindPopup(`<b>${esc(f.properties.event)}</b><br>${esc(f.properties.headline || '')}`).addTo(o.alerts); }
-  if ($('lyG').checked) {
+  {
     const z = o.map.getZoom();
-    for (const g of [...S.gauges.values()].sort((x, y) => (x.total || 0) - (y.total || 0))) {
+    for (const g of [...S.gauges.values()].filter(g => S.nets[g.net]).sort((x, y) => (x.total || 0) - (y.total || 0))) {
       const v = gaugeShown(g); if (v == null) continue; const col = colorFor(v) || '#eef3f8', part = g.flags.some(f => f.k === 'partial');
       const lab = (g.key && z >= 9.5 ? g.id + ' ' : '') + v.toFixed(2);
       const icon = L.divIcon({ className: '', html: `<div class="gm${g.key ? ' key' : ''}${g.suspect ? ' sus' : ''}${part ? ' part' : ''}" style="background:${col};color:${inkFor(col)}">${g.suspect ? (g.key ? g.id + ' ?' : '?') : lab}</div>`, iconSize: [g.key ? 74 : 40, 22], iconAnchor: [g.key ? 82 : 20, 11] });
       L.marker([g.lat, g.lon], { icon, zIndexOffset: (g.key ? 500 : 0) + Math.round(v * 10), title: g.name }).on('click', () => toggleSel(g.id)).bindPopup(gaugePopup(g)).addTo(o.gauges);
     }
   }
-  if ($('lyP').checked) {
+  {
     const placed = [], hit = b => placed.some(q => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]);
-    if ($('lyG').checked) for (const g of S.gauges.values()) { if (gaugeShown(g) == null) continue; const q = o.map.latLngToContainerPoint([g.lat, g.lon]); placed.push(g.key ? [q.x - 84, q.y - 12, q.x - 6, q.y + 12] : [q.x - 22, q.y - 12, q.x + 22, q.y + 12]); }
-    for (const p of S.poi) {
+    for (const g of S.gauges.values()) { if (!S.nets[g.net] || gaugeShown(g) == null) continue; const q = o.map.latLngToContainerPoint([g.lat, g.lon]); placed.push(g.key ? [q.x - 84, q.y - 12, q.x - 6, q.y + 12] : [q.x - 22, q.y - 12, q.x + 22, q.y + 12]); }
+    for (const p of shownPoi()) {
       const v = poiMrms(p), txt = p[0] + (v != null ? ' ' + v.toFixed(2) + '"' : ''), w = txt.length * 6.6 + 16, pt = o.map.latLngToContainerPoint([p[2], p[3]]);
       const R = [pt.x + 8, pt.y - 10, pt.x + 12 + w, pt.y + 10], Lf = [pt.x - 12 - w, pt.y - 10, pt.x - 8, pt.y + 10], side = !hit(R) ? 'r' : !hit(Lf) ? 'l' : '';
       if (side) placed.push(side === 'r' ? R : Lf); placed.push([pt.x - 8, pt.y - 8, pt.x + 8, pt.y + 8]);
@@ -400,7 +415,7 @@ function renderMaps() {
   if (!$('wrapB').hidden) { drawRaster(M.B, $('rasterB').value); drawPoints(M.B); const tb = tagFor($('rasterB').value); $('tagB').innerHTML = tb[0] ? `<b>${esc(tb[0])}</b>${esc(tb[1])}` : ''; $('tagB').hidden = !tb[0]; }
   const types = [$('rasterA').value].concat($('wrapB').hidden ? [] : [$('rasterB').value]); let h = '';
   const bar = (Lv, Cs, title, lead) => `<div class="lgwrap"><div class="small muted">${title}</div><div class="lgbar">${Cs.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="lgticks">${lead ? '<span></span>' : ''}${Lv.map(v => `<span>${v}</span>`).join('')}${lead ? '' : ''}</div></div>`;
-  if (types.some(t => t !== 'diff' && t !== 'none' && !IEMT[t]) || $('lyG').checked) h += bar(LEVELS.slice(1), COLORS, 'Rainfall, inches (each color starts at the value under its left edge; first band starts at 0.01")', true);
+  if (types.some(t => t !== 'diff' && t !== 'none' && !IEMT[t]) || Object.values(S.nets).some(Boolean)) h += bar(LEVELS.slice(1), COLORS, 'Rainfall, inches (each color starts at the value under its left edge; first band starts at 0.01")', true);
   if (types.includes('diff')) h += bar(DLEVELS, DCOLORS, 'MRMS minus gauges, inches', true);
   h += `<div class="small muted" style="min-width:210px">Pills = gauge totals · <span style="border:1px dashed currentColor;border-radius:8px;padding:0 5px">?</span> = gauge likely not reporting · ◆ pads ● airfields</div>`;
   $('legend').innerHTML = h;
@@ -408,7 +423,7 @@ function renderMaps() {
 
 /* ───────────────────────── panels ───────────────────────── */
 function nearestGauge(lat, lon) { let best = null, bd = 1e9; for (const g of fullGauges()) { const d = km(lat, lon, g.lat, g.lon); if (d < bd) { bd = d; best = g; } } return best ? { g: best, d: bd } : null; }
-function poiRows() { return S.poi.map(p => { const mr = S.mrms ? sample(S.mrms.grid, p[2], p[3]) : null, an = S.idw ? sample(S.idw, p[2], p[3]) : null, ng = nearestGauge(p[2], p[3]), pk = S.hourly ? sample(S.hourly.geo, p[2], p[3], S.hourly.peak) : null; return { name: p[0], kind: p[1], lat: p[2], lon: p[3], mrms: mr, an, ng, pk }; }); }
+function poiRows() { return shownPoi().map(p => { const mr = S.mrms ? sample(S.mrms.grid, p[2], p[3]) : null, an = S.idw ? sample(S.idw, p[2], p[3]) : null, ng = nearestGauge(p[2], p[3]), pk = S.hourly ? sample(S.hourly.geo, p[2], p[3], S.hourly.peak) : null; return { name: p[0], kind: p[1], lat: p[2], lon: p[3], mrms: mr, an, ng, pk }; }); }
 const swatch = v => v == null ? '<span class="muted">—</span>' : `<span class="sw" style="background:${colorFor(v) || 'transparent'};color:${colorFor(v) ? inkFor(colorFor(v)) : 'inherit'}">${v.toFixed(2)}</span>`;
 function renderSites() {
   const rows = poiRows(); let h = `<table><thead><tr><th>Site</th><th class="n" title="MRMS radar estimate at the site">MRMS</th><th class="n" title="Interpolated from surrounding gauges (within 10 km)">Gauges</th><th>Nearest gauge</th>${S.hourly ? '<th class="n" title="Highest single-hour MRMS total">Peak 1 h</th>' : ''}</tr></thead><tbody>`;
@@ -417,7 +432,7 @@ function renderSites() {
   $('tab-sites').innerHTML = h;
 }
 function renderGauges() {
-  const gs = [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total), max = Math.max(0.01, ...gs.map(g => g.total));
+  const gs = [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null).sort((x, y) => y.total - x.total), max = Math.max(0.01, ...gs.map(g => g.total));
   let h = `<table><thead><tr><th>Gauge</th><th class="n">Total</th><th class="n" title="Accumulation in the final hour of the period">Last 1 h</th><th class="n" title="MRMS estimate at the gauge">MRMS</th></tr></thead><tbody>`;
   for (const g of gs) h += `<tr class="row${S.sel.includes(g.id) ? ' sel' : ''}" data-id="${esc(g.id)}" data-ll="${g.lat},${g.lon}"><td><b>${esc(g.id)}</b> <span class="muted">${esc(g.name.replace(/^K\w+ · /, '').replace('KSC rain gauge ', 'KSC gauge ').replace(/^USGS /, ''))}</span>${g.flags.map(f => `<span class="flag w" title="${esc(f.t)}">${f.k === 'suspect' ? 'check gauge' : f.k === 'partial' ? 'partial period' : 'stale'}</span>`).join('')}<div class="bar" style="width:${Math.round(g.total / max * 100)}%;background:${colorFor(g.total) || 'var(--line)'}"></div></td><td class="n">${swatch(g.total)}</td><td class="n">${fin(g.last1)}</td><td class="n">${fin(g.mrms)}</td></tr>`;
   if (!gs.length) h += '<tr><td colspan="4" class="muted">No gauge data loaded yet.</td></tr>';
@@ -432,7 +447,7 @@ function renderSources() {
   let h = Object.keys(SRC).map(k => { const s = S.src[k] || { state: 'idle', detail: 'Waiting' }; return `<div class="src"><span class="dot ${s.state === 'ok' ? 'ok' : s.state === 'err' ? 'err' : s.state === 'warn' ? 'warn' : s.state === 'load' ? 'load' : ''}" title="${s.state}"></span><div><b>${SRC[k]}</b><div class="small ${s.state === 'err' ? '' : 'muted'}">${s.state === 'err' ? '✕ ' : s.state === 'ok' ? '✓ ' : ''}${esc(s.detail || '')}</div>${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener">Open source request</a>` : ''}</div></div>`; }).join('');
   h += `<div class="box"><h3>MRMS product</h3><select id="product"><option value="auto">Auto — best available (Pass 2 → Pass 1 → Radar-only)</option><option value="pass2">Multi-sensor Pass 2 (gauge-corrected, ~2 h behind)</option><option value="pass1">Multi-sensor Pass 1 (~1 h behind)</option><option value="radar">Radar-only (fastest)</option></select>
   <div style="margin-top:8px"><label class="chk"><input type="checkbox" id="exSus" ${S.excludeSuspect ? 'checked' : ''}> Leave "check gauge" sites out of maxima, analysis and bias</label></div></div>
-  <div class="box"><h3>KSC rain gauges — paste from the archive</h3><div class="small muted">Open the <a href="${CFG.kscPage}" target="_blank" rel="noopener" style="color:var(--acc)">Past 24 Hour rainfall page</a>, select the whole page (Ctrl+A), copy, and paste here. Hours are kept in this browser and merged with the automatic collector.</div>
+  <div class="box"><h3>KSC rain gauges — paste from the archive</h3><div class="small muted">Open the <a href="${CFG.kscPage}" target="_blank" rel="noopener" style="color:var(--acc)">Past 24 Hour page</a>, or a daily report for one date from the <a href="https://kscweather.ksc.nasa.gov/wxarchive/Reports/Rainfall" target="_blank" rel="noopener" style="color:var(--acc)">Rainfall Reports page</a>. Select the whole page (Ctrl+A), copy, paste here. Repeat for each day you need — hours are kept in this browser and merged with the automatic collector.</div>
   <textarea id="kscPaste" placeholder="Gauge  11:00  12:00  …  Total">${esc(keep)}</textarea><div style="display:flex;gap:8px;margin-top:6px;align-items:center"><button id="kscAdd" class="primary">Add pasted table</button><button id="kscClear">Clear pasted data</button><span id="kscMsg" class="small muted">${esc(S.kscMsg || '')}</span></div></div>
   <div class="box"><h3>Key sites</h3><div class="small muted">One per line: name, type (pad / air / ops), latitude, longitude. Saved in this browser.</div><textarea id="poiEdit" style="min-height:120px">${esc(S.poi.map(p => p.join(', ')).join('\n'))}</textarea><div style="display:flex;gap:8px;margin-top:6px"><button id="poiSave" class="primary">Save sites</button><button id="poiReset">Restore defaults</button><span id="poiMsg" class="small muted"></span></div></div>`;
   el.innerHTML = h; $('product').value = S.product;
@@ -441,7 +456,7 @@ function stats() {
   const full = fullGauges(), top = full.slice().sort((x, y) => y.total - x.total)[0], cape = S.mrms ? boxStats(S.mrms.grid, CFG.cape) : null, pr = poiRows().filter(r => r.mrms != null);
   const pairs = full.filter(g => g.mrms != null && g.cmp != null && g.cmp >= 0.25), sg = pairs.reduce((s, g) => s + g.cmp, 0), sm = pairs.reduce((s, g) => s + g.mrms, 0);
   const rate = goodGauges().filter(g => g.last1 != null && !g.flags.some(f => f.k === 'stale')).sort((x, y) => y.last1 - x.last1)[0];
-  const sus = [...S.gauges.values()].filter(g => g.suspect);
+  const sus = [...S.gauges.values()].filter(g => S.nets[g.net] && g.suspect);
   return { full, top, cape, pr, pairs, ratio: sg > 0 && pairs.length >= 3 ? sm / sg : null, rate, sus, prMax: pr.slice().sort((x, y) => y.mrms - x.mrms)[0], prMin: pr.slice().sort((x, y) => x.mrms - y.mrms)[0], floods: S.alerts.filter(f => /Flood/.test(f.properties.event)) };
 }
 const nearPoi = (lat, lon) => { let b = null, bd = 1e9; for (const p of S.poi) { const d = km(lat, lon, p[2], p[3]); if (d < bd) { bd = d; b = p; } } return b ? `${bd.toFixed(0)} km from ${b[0]}` : ''; };
@@ -459,6 +474,7 @@ function renderKpis() {
   if (s.sus.length) notes.push(`${s.sus.length} gauge${s.sus.length > 1 ? 's' : ''} read zero while radar or neighbors show rain (${s.sus.slice(0, 8).map(g => g.id).join(', ')}${s.sus.length > 8 ? '…' : ''}) — ${S.excludeSuspect ? 'left out of maxima and analysis' : 'included'}`);
   const part = [...S.gauges.values()].filter(g => g.flags.some(f => f.k === 'partial')); if (part.length) notes.push(`${part.length} gauge${part.length > 1 ? 's have' : ' has'} data for only part of the period (left out of maxima)`);
   if (S.fellBack && IEMT[$('rasterA').value]) notes.push('MRMS numbers could not be loaded, so the map is showing the IEM reference picture (fixed look-back ending now, IEM colors). Key-site MRMS values are unavailable.');
+  if (S.noBase) notes.push('Background map tiles are blocked on this network (CARTO, OpenStreetMap and Esri were all tried). Rainfall shading, gauges and key sites still plot correctly; only the street/imagery backdrop is missing.');
   const bad = Object.keys(SRC).filter(x => S.src[x] && S.src[x].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(x => SRC[x].split(' (')[0]).join('; ')} — see Sources tab`);
   $('banner').hidden = !notes.length; $('banner').innerHTML = notes.map(esc).join('<br>');
 }
@@ -499,7 +515,7 @@ function renderChart() {
 }
 const NETCOL = { ASOS: '--s1', KSC: '--s2', USGS: '--s3' }, NETNAME = { ASOS: 'Airfield ASOS/AWOS', KSC: 'KSC/CCSFS gauges', USGS: 'USGS gauges' };
 function renderScatter() {
-  const el = $('scatter'), W = Math.max(300, el.clientWidth - 16), Hh = 280, m = { l: 54, r: 12, t: 10, b: 30 }, gs = [...S.gauges.values()].filter(g => g.cmp != null && g.mrms != null && !g.flags.some(f => f.k === 'partial'));
+  const el = $('scatter'), W = Math.max(300, el.clientWidth - 16), Hh = 280, m = { l: 54, r: 12, t: 10, b: 30 }, gs = [...S.gauges.values()].filter(g => S.nets[g.net] && g.cmp != null && g.mrms != null && !g.flags.some(f => f.k === 'partial'));
   if (!gs.length) { el.innerHTML = '<div class="box muted">Needs MRMS and gauge totals for the same period.</div>'; $('scatterNote').textContent = ''; return; }
   const mx = niceMax(Math.max(0.5, ...gs.map(g => Math.max(g.cmp, g.mrms)))), x = v => m.l + v / mx * (W - m.l - m.r), y = v => Hh - m.b - v / mx * (Hh - m.t - m.b);
   let h = svgEl(W, Hh); for (let i = 0; i <= 4; i++) { const v = mx * i / 4; h += `<line class="gl" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><line class="gl" x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${Hh - m.b}"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(2)}</text><text x="${x(v)}" y="${Hh - 14}" text-anchor="middle">${+v.toFixed(2)}</text>`; }
@@ -568,10 +584,18 @@ function init() {
   $('btnTheme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; store.set('theme', t); $('btnTheme').textContent = t === 'dark' ? 'Light' : 'Dark'; };
   $('btnCopy').onclick = async () => { const t = briefText(); try { await navigator.clipboard.writeText(t); $('btnCopy').textContent = 'Copied'; } catch (e) { const w = $('tab-sources'); document.querySelector('[data-tab=sources]').click(); w.insertAdjacentHTML('afterbegin', `<div class="box"><h3>Summary (select and copy)</h3><textarea style="min-height:200px">${esc(t)}</textarea></div>`); } setTimeout(() => $('btnCopy').textContent = 'Copy summary', 1500); };
   $('btnCsv').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csvText()], { type: 'text/csv' })); a.download = `space-coast-rainfall_${ymd(S.a)}-${ymd(S.b)}.csv`; document.body.appendChild(a); a.click(); a.remove(); };
-  for (const id of ['rasterA', 'rasterB', 'smooth', 'lyG', 'lyP', 'lyA', 'lyR']) $(id).onchange = renderMaps; $('opac').oninput = renderMaps;
+  for (const id of ['rasterA', 'rasterB', 'smooth', 'lyA', 'lyR']) $(id).onchange = renderMaps; $('opac').oninput = renderMaps;
   $('base').onchange = () => { store.set('base', $('base').value); setBase(M.A, $('base').value); setBase(M.B, $('base').value); };
   $('btnCmp').onclick = () => { const on = $('wrapB').hidden; $('wrapB').hidden = !on; $('grpB').hidden = !on; $('btnCmp').classList.toggle('on', on); M.A.map.invalidateSize(); if (on) { M.B.map.invalidateSize(); M.B.map.setView(M.A.map.getCenter(), M.A.map.getZoom(), { animate: false }); } renderMaps(); };
   $('btnHome').onclick = () => M.A.map.setView([28.53, -80.66], 11); $('btnWide').onclick = () => M.A.map.fitBounds([[CFG.box.s + 0.2, CFG.box.w + 0.3], [CFG.box.n - 0.2, CFG.box.e - 0.1]]);
+  const allOn = g => Object.values(g).every(Boolean);
+  const syncChips = () => document.querySelectorAll('#filters button').forEach(bn => { const g = bn.dataset.net ? S.nets : S.kinds, k = bn.dataset.net || bn.dataset.kind; bn.classList.toggle('on', k === '*' ? allOn(g) : !allOn(g) && !!g[k]); });
+  $('filters').onclick = e => { const bn = e.target.closest('button'); if (!bn) return; const g = bn.dataset.net ? S.nets : S.kinds, k = bn.dataset.net || bn.dataset.kind;
+    if (k === '*') for (const x in g) g[x] = true;
+    else if (e.shiftKey || e.ctrlKey || e.metaKey) { if (allOn(g)) for (const x in g) g[x] = x === k; else g[k] = !g[k]; if (!Object.values(g).some(Boolean)) for (const x in g) g[x] = true; }
+    else { const only = !allOn(g) && Object.keys(g).every(x => g[x] === (x === k)); for (const x in g) g[x] = only ? true : x === k; }
+    store.set('nets', S.nets); store.set('kinds', S.kinds); syncChips(); buildAnalysis(); renderAll(); };
+  syncChips();
   $('btnHourly').onclick = loadHourly; $('tlSlider').oninput = () => { S.tl = +$('tlSlider').value; S.ver++; renderMaps(); $('tlInfo').textContent = `Accumulation ${fmt(S.hourly.a)} → ${fmt(S.hourly.a + (S.tl + 1) * H)}`; };
   let play = null; $('tlPlay').onclick = () => { if (play) { clearInterval(play); play = null; $('tlPlay').textContent = 'Play'; return; } $('tlPlay').textContent = 'Pause'; if (S.tl >= S.hourly.n - 1) S.tl = -1; play = setInterval(() => { if (!S.hourly || S.tl >= S.hourly.n - 1) { clearInterval(play); play = null; $('tlPlay').textContent = 'Play'; return; } S.tl++; $('tlSlider').value = S.tl; $('tlSlider').oninput(); }, 450); };
   document.querySelector('.tabs').onclick = e => { const bn = e.target.closest('button'); if (!bn) return; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === bn)); document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + bn.dataset.tab)); };

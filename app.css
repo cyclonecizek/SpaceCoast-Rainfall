@@ -73,7 +73,7 @@ svg text{fill:var(--mut);font-size:11px;font-family:inherit}svg .gl{stroke:var(-
 .poi span{background:rgba(11,16,22,.72);padding:2px 5px;border-radius:4px}.poi span b{color:#ffe08a;margin-left:4px;font-variant-numeric:tabular-nums}
 .leaflet-container{font:inherit;background:#0d141b}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink)}.leaflet-popup-content{margin:10px 12px;font-size:12.5px;line-height:1.45}
 .leaflet-popup-content b.big{font-size:20px}.leaflet-control-attribution{font-size:10px}
-body.brief .range,body.brief .mapbar,body.brief .timeline,body.brief .tools>*:not(#btnBrief),body.brief .foot{display:none}
+body.brief .range,body.brief .mapbar:not(#filters),body.brief #filters .muted,body.brief .timeline,body.brief .tools>*:not(#btnBrief),body.brief .foot{display:none}
 body.brief .maps{height:calc(100vh - 250px);min-height:520px}body.brief .side{max-height:calc(100vh - 190px)}
 @media(max-width:1250px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.charts{grid-template-columns:1fr}.side{max-height:560px}}
 @media print{.range,.mapbar,.timeline,.tools,.tabs{display:none}.grid{grid-template-columns:1fr}.side{max-height:none}.tab{display:block!important}body{background:#fff}}

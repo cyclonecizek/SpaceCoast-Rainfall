@@ -20,9 +20,22 @@ Static dashboard (no build step, no server). Open `index.html`, or publish the f
 | USGS precipitation gauges | USGS NWIS instantaneous values | browser |
 | Flood watches / warnings | api.weather.gov | browser |
 
-Any custom period works for MRMS and the airfield gauges straight away. KSC gauges cover whatever the
-collector (or your pastes) has accumulated — the archive page only exposes the last 24 hours, so history
-builds from the first run. Gauges with only part of the period are flagged and left out of maxima.
+Any custom period works for MRMS and the airfield gauges straight away. KSC gauges cover whatever hours
+have been collected. Three ways to get them:
+
+1. **Collector (automatic)** — every 20 minutes the GitHub Action reads the archive's Past 24 Hour page for
+   the newest hours and backfills anything older from the archive's *Search Rain Gauges* export (per-tip
+   records summed to hours). By default it keeps the last 7 days complete.
+2. **Any other period** — Actions → *Collect KSC rain gauges* → **Run workflow**, and enter start and end
+   dates (UTC, `YYYY-MM-DD`). The hours are added to `data/ksc_rain.json` (120 days are kept). Then set the
+   same period in the dashboard.
+3. **Paste (manual)** — in the dashboard's Sources tab paste the Past 24 Hour page or a daily report.
+
+Gauges with only part of the period are flagged and left out of maxima.
+
+The Dark, Light and Voyager basemaps come from CARTO and use the API key set as `cartoKey` at the top of
+`app.js` (CARTO watermarks tiles requested without one). OpenStreetMap and Esri imagery need no key. Leaflet
+is bundled in `vendor/`. If a basemap is blocked on your network the page tries the others automatically.
 
 ## How totals are computed
 
