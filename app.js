@@ -345,7 +345,8 @@ function makeMap(key) {
   const map = L.map('map' + key, { zoomControl: key === 'A', attributionControl: true, zoomSnap: 0.25, preferCanvas: false }).setView([28.53, -80.66], 11);
   map.createPane('rast').style.zIndex = 350; map.createPane('lab').style.zIndex = 380; map.getPane('lab').style.pointerEvents = 'none'; map.createPane('alerts').style.zIndex = 390;
   const o = { map, base: null, labels: null, rast: null, rastKey: '', radar: null, gauges: L.layerGroup().addTo(map), pois: L.layerGroup().addTo(map), alerts: L.layerGroup().addTo(map) };
-  L.control.scale({ imperial: true, metric: true }).addTo(map); M[key] = o; return o;
+  L.control.scale({ imperial: true, metric: true }).addTo(map); M[key] = o;
+  map.on('click', e => openQuery(o, e.latlng.lat, e.latlng.lng)); map.getContainer().style.cursor = 'crosshair'; return o;
 }
 let syncing = false;
 function syncMaps(from, to) { from.map.on('move', () => { if (syncing || $('wrapB').hidden) return; syncing = true; to.map.setView(from.map.getCenter(), from.map.getZoom(), { animate: false }); syncing = false; }); }
@@ -381,7 +382,7 @@ function drawRaster(o, type) {
 }
 function drawPoints(o) {
   o.gauges.clearLayers(); o.pois.clearLayers(); o.alerts.clearLayers();
-  if ($('lyA').checked) for (const f of S.alerts) { if (!f.geometry) continue; const col = alertColor(f.properties.event); L.geoJSON(f, { pane: 'alerts', style: { color: col, weight: 2.5, fillColor: col, fillOpacity: 0.07, dashArray: /Watch|Advisory/.test(f.properties.event) ? '6 5' : null } }).bindPopup(`<b>${esc(f.properties.event)}</b><br>${esc(f.properties.headline || '')}`).addTo(o.alerts); }
+  if ($('lyA').checked) for (const f of S.alerts) { if (!f.geometry) continue; const col = alertColor(f.properties.event); L.geoJSON(f, { pane: 'alerts', style: { color: col, weight: 2.5, fillColor: col, fillOpacity: 0.07, dashArray: /Watch|Advisory/.test(f.properties.event) ? '6 5' : null }, interactive: false }).addTo(o.alerts); }
   {
     const z = o.map.getZoom();
     for (const g of [...S.gauges.values()].filter(g => S.nets[g.net]).sort((x, y) => (x.total || 0) - (y.total || 0))) {
@@ -410,14 +411,42 @@ function poiMrms(p) { if (S.hourly && S.tl >= 0) return sample(S.hourly.geo, p[2
 function gaugePopup(g) {
   return () => `<b>${esc(g.name)}</b><br><b class="big">${fin(g.total)}"</b> gauge total<br>` + (g.mrms != null ? `MRMS at this spot: <b>${g.mrms.toFixed(2)}"</b><br>` : '') + `Last hour: ${fin(g.last1)}"<br><span class="muted">${esc(g.src)} · last report ${g.lastT ? fmt(g.lastT) : '—'}</span>` + g.flags.map(f => `<br><span style="color:var(--warn)">⚠ ${esc(f.t)}</span>`).join('');
 }
+/* Click anywhere on a map: everything known about that spot. */
+function inRing(lat, lon, ring) { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const a = ring[i], b = ring[j]; if ((a[1] > lat) !== (b[1] > lat) && lon < (b[0] - a[0]) * (lat - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
+function alertsAt(lat, lon) { return S.alerts.filter(f => { const g = f.geometry; if (!g) return false; const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : []; return polys.some(p => p[0] && inRing(lat, lon, p[0])); }); }
+function queryHtml(lat, lon) {
+  const end = shownEnd(), mr = S.hourly && S.tl >= 0 ? sample(S.hourly.geo, lat, lon, S.hourly.cum[S.tl]) : S.mrms ? sample(S.mrms.grid, lat, lon) : null;
+  const an = S.idw ? sample(S.idw, lat, lon) : null, pk = S.hourly ? sample(S.hourly.geo, lat, lon, S.hourly.peak) : null;
+  const near = fullGauges().map(g => ({ g, d: km(lat, lon, g.lat, g.lon) })).sort((x, y) => x.d - y.d).slice(0, 4);
+  const row = (l, v) => `<tr><td style="border:0;padding:1px 10px 1px 0" class="muted">${l}</td><td style="border:0;padding:1px 0;text-align:right">${v}</td></tr>`;
+  let h = `<b>${lat.toFixed(4)}°N, ${Math.abs(lon).toFixed(4)}°W</b><br><span class="muted">${esc(nearPoi(lat, lon))}</span><table style="margin:6px 0;width:auto">`;
+  h += row(`MRMS radar estimate${end ? ' (to ' + fmt(end, S.tz, false) + ')' : ''}`, mr != null ? `<b class="big">${mr.toFixed(2)}"</b>` : S.mrms ? 'outside coverage' : 'not loaded');
+  h += row('Gauge analysis here', an != null ? `<b>${an.toFixed(2)}"</b>` : '<span class="muted">no gauge within 10 km</span>');
+  if (mr != null && an != null && !end) h += row('Radar minus gauges', `<b>${mr - an >= 0 ? '+' : '−'}${Math.abs(mr - an).toFixed(2)}"</b>`);
+  if (pk != null) h += row('Peak 1-hour (MRMS)', `<b>${pk.toFixed(2)}"</b>`);
+  h += '</table>';
+  if (near.length) h += '<span class="lbl">Nearest gauges</span><table style="width:auto">' + near.map(n => row(`${esc(n.g.id)} · ${n.d.toFixed(1)} km`, `<b>${n.g.total.toFixed(2)}"</b>`)).join('') + '</table>';
+  for (const f of alertsAt(lat, lon)) h += `<div style="margin-top:5px"><span class="ev" style="background:${alertColor(f.properties.event)};color:#0b0b0b;border-radius:4px;padding:1px 6px;font-weight:650;font-size:11.5px">${esc(f.properties.event)}</span> <span class="muted">until ${fmt(Date.parse(f.properties.ends || f.properties.expires))}</span></div>`;
+  h += `<div style="margin-top:8px;display:flex;gap:6px"><button data-q="pin">Save as key site</button><button data-q="copy">Copy</button></div>`;
+  return h;
+}
+function openQuery(o, lat, lon) {
+  S.query = { lat, lon, key: o === M.A ? 'A' : 'B' };
+  o.qpop = (o.qpop || L.popup({ maxWidth: 330, autoPan: true })).setLatLng([lat, lon]).setContent(queryHtml(lat, lon)).openOn(o.map);
+  o.qpop.off('remove').on('remove', () => { if (S.query && M[S.query.key] === o) S.query = null; });
+  const el = o.qpop.getElement(); if (el) el.onclick = e => { const a = e.target.dataset.q; if (!a) return;
+    if (a === 'pin') { const n = S.poi.filter(p => /^Point /.test(p[0])).length + 1; S.poi = S.poi.concat([[`Point ${n}`, 'ops', +lat.toFixed(4), +lon.toFixed(4)]]); store.set('poi', S.poi); S.kinds.ops = true; o.map.closePopup(); renderAll(); renderSources(); }
+    if (a === 'copy') { const t = el.querySelector('.leaflet-popup-content').innerText.replace(/\n?Save as key site\s*Copy\s*$/, '').trim(); navigator.clipboard.writeText(t).then(() => { e.target.textContent = 'Copied'; }, () => { e.target.textContent = 'Copy blocked'; }); } };
+}
 function renderMaps() {
+  if (S.query && M[S.query.key].qpop && M[S.query.key].qpop.isOpen()) M[S.query.key].qpop.setContent(queryHtml(S.query.lat, S.query.lon));
   drawRaster(M.A, $('rasterA').value); drawPoints(M.A); const ta = tagFor($('rasterA').value); $('tagA').innerHTML = ta[0] ? `<b>${esc(ta[0])}</b>${esc(ta[1])}` : ''; $('tagA').hidden = !ta[0];
   if (!$('wrapB').hidden) { drawRaster(M.B, $('rasterB').value); drawPoints(M.B); const tb = tagFor($('rasterB').value); $('tagB').innerHTML = tb[0] ? `<b>${esc(tb[0])}</b>${esc(tb[1])}` : ''; $('tagB').hidden = !tb[0]; }
   const types = [$('rasterA').value].concat($('wrapB').hidden ? [] : [$('rasterB').value]); let h = '';
   const bar = (Lv, Cs, title, lead) => `<div class="lgwrap"><div class="small muted">${title}</div><div class="lgbar">${Cs.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="lgticks">${lead ? '<span></span>' : ''}${Lv.map(v => `<span>${v}</span>`).join('')}${lead ? '' : ''}</div></div>`;
   if (types.some(t => t !== 'diff' && t !== 'none' && !IEMT[t]) || Object.values(S.nets).some(Boolean)) h += bar(LEVELS.slice(1), COLORS, 'Rainfall, inches (each color starts at the value under its left edge; first band starts at 0.01")', true);
   if (types.includes('diff')) h += bar(DLEVELS, DCOLORS, 'MRMS minus gauges, inches', true);
-  h += `<div class="small muted" style="min-width:210px">Pills = gauge totals · <span style="border:1px dashed currentColor;border-radius:8px;padding:0 5px">?</span> = gauge likely not reporting · ◆ pads ● airfields</div>`;
+  h += `<div class="small muted" style="min-width:210px">Click the map for values at any point · Pills = gauge totals · <span style="border:1px dashed currentColor;border-radius:8px;padding:0 5px">?</span> = gauge likely not reporting · ◆ pads ● airfields</div>`;
   $('legend').innerHTML = h;
 }
 

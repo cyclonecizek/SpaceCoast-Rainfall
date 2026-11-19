@@ -71,6 +71,8 @@ with sync_playwright() as p:
     pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(400); pg.screenshot(path='/tmp/f1.png')
     print('air only ->',pg.evaluate("[S.kinds, document.querySelectorAll('#tab-sites tr.row').length]"))
     pg.click('#filters button[data-net="KSC"]'); pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(300); print('reset ->',pg.evaluate('[S.nets,S.kinds]'))
+    pg.mouse.click(700,700); pg.wait_for_timeout(500); print('query ->',pg.inner_text('.leaflet-popup-content').replace('\n',' | ')[:400]); pg.screenshot(path='/tmp/q1.png')
+    pg.click('button[data-q=pin]'); pg.wait_for_timeout(300); print('pinned',pg.evaluate('S.poi[S.poi.length-1]')); pg.evaluate("S.poi=POI_DEFAULT;store.set('poi',null)")
     # 72 h preset, compare mode, hourly timeline
     pg.click('#presets button[data-h="72"]'); pg.wait_for_function("S.loadedAt>0 && S.mrms && (S.mrms.b-S.mrms.a)>70*36e5",timeout=90000)
     print('72h parts',pg.evaluate("S.mrms.parts.map(p=>p.hours).join('+')"))
