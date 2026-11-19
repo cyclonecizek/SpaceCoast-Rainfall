@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Coast Rainfall — Flood Situational Awareness</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="mark" aria-hidden="true"></div>
+    <div>
+      <h1>Space Coast Rainfall</h1>
+      <div class="sub">Flood situational awareness · KSC · CCSFS · Patrick SFB</div>
+    </div>
+  </div>
+  <div class="clocks">
+    <div><span class="lbl">UTC</span><b id="clkZ">--</b></div>
+    <div><span class="lbl">Eastern</span><b id="clkL">--</b></div>
+    <div><span class="lbl">Data loaded</span><b id="clkR">--</b></div>
+  </div>
+  <div class="tools">
+    <button id="btnRefresh" title="Reload all sources">Refresh</button>
+    <label class="chk" title="Reload every 5 minutes while a rolling preset is selected"><input type="checkbox" id="auto" checked> Auto 5 min</label>
+    <button id="btnBrief" title="Hide controls for projecting">Brief mode</button>
+    <button id="btnCopy" title="Copy a text summary for email or slides">Copy summary</button>
+    <button id="btnCsv" title="Download the gauge and key-site tables">CSV</button>
+    <button id="btnTheme" title="Switch light / dark">Light</button>
+  </div>
+</header>
+
+<section class="range" id="rangeBar">
+  <div class="presets" id="presets" role="group" aria-label="Time range presets"></div>
+  <div class="custom">
+    <label>From <input type="datetime-local" id="tA"></label>
+    <label>To <input type="datetime-local" id="tB"></label>
+    <div class="seg" id="tzSeg" role="group" aria-label="Time zone"><button data-tz="UTC">UTC</button><button data-tz="ET">Eastern</button></div>
+    <button id="btnApply" class="primary">Apply range</button>
+  </div>
+  <div class="rangeNote" id="rangeNote"></div>
+</section>
+
+<div id="banner" class="banner" hidden></div>
+
+<section class="kpis" id="kpis"></section>
+
+<main class="grid">
+  <section class="mapcard">
+    <div class="mapbar">
+      <div class="grp"><span class="lbl">Map shows</span>
+        <select id="rasterA"></select>
+      </div>
+      <div class="grp" id="grpB" hidden><span class="lbl">Right map</span>
+        <select id="rasterB"></select>
+      </div>
+      <div class="grp"><span class="lbl">Opacity</span><input type="range" id="opac" min="20" max="100" value="78"></div>
+      <label class="chk"><input type="checkbox" id="smooth" checked> Smooth</label>
+      <label class="chk"><input type="checkbox" id="lyG" checked> Gauges</label>
+      <label class="chk"><input type="checkbox" id="lyP" checked> Key sites</label>
+      <label class="chk"><input type="checkbox" id="lyA" checked> Flood alerts</label>
+      <label class="chk"><input type="checkbox" id="lyR"> Live radar</label>
+      <div class="grp"><span class="lbl">Basemap</span>
+        <select id="base"><option value="dark">Dark</option><option value="light">Light</option><option value="sat">Imagery</option><option value="osm">Streets</option></select>
+      </div>
+      <button id="btnCmp" title="Two synced maps side by side">Compare</button>
+      <button id="btnHome" title="Zoom to the Cape">Cape</button>
+      <button id="btnWide" title="Zoom to the region">Region</button>
+    </div>
+    <div class="maps" id="maps">
+      <div class="mapwrap"><div id="mapA" class="map"></div><div class="maptag" id="tagA"></div></div>
+      <div class="mapwrap" id="wrapB" hidden><div id="mapB" class="map"></div><div class="maptag" id="tagB"></div></div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="timeline" id="timeline">
+      <button id="btnHourly">Load hourly MRMS timeline</button>
+      <span id="tlInfo" class="muted">Adds an accumulation slider, peak 1-hour rates and MRMS curves at key sites.</span>
+      <input type="range" id="tlSlider" min="0" max="0" value="0" hidden>
+      <button id="tlPlay" hidden>Play</button>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="tabs" role="tablist">
+      <button data-tab="sites" class="on">Key sites</button>
+      <button data-tab="gauges">Gauges</button>
+      <button data-tab="alerts">Alerts <span id="alertN" class="pill" hidden></span></button>
+      <button data-tab="sources">Sources</button>
+    </div>
+    <div class="tab on" id="tab-sites"></div>
+    <div class="tab" id="tab-gauges"></div>
+    <div class="tab" id="tab-alerts"></div>
+    <div class="tab" id="tab-sources"></div>
+  </aside>
+</main>
+
+<section class="charts">
+  <div class="card">
+    <div class="cardhead"><h2>Accumulated rainfall over the period</h2><span class="muted" id="chartHint">Click a gauge or key site (map or tables) to add or remove it.</span></div>
+    <div id="chart" class="chart"></div>
+    <div id="chartLegend" class="chartlegend"></div>
+  </div>
+  <div class="card">
+    <div class="cardhead"><h2>Radar estimate vs. gauges</h2><span class="muted">Each dot is one gauge. On the line = MRMS agrees.</span></div>
+    <div id="scatter" class="chart"></div>
+    <div id="scatterNote" class="muted small"></div>
+  </div>
+</section>
+
+<footer class="foot" id="foot"></footer>
+<div id="tip" class="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="mrms.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
