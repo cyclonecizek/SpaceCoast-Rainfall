@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 OUT = os.path.join(os.environ.get("DATA_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data"), "cocorahs.json")
 DEBUG = os.path.join(os.path.dirname(OUT), "cocorahs_debug.txt")
 BASE = "https://data.cocorahs.org/export/exportreports.aspx"
-COUNTIES = os.environ.get("COCORAHS_COUNTIES", "BR,VL,IR,OR,SM,OS").split(",")   # Brevard, Volusia, Indian River, Orange, Seminole, Osceola
+COUNTIES = os.environ.get("COCORAHS_COUNTIES", "BV,VL,IR,OR,SM,OS").split(",")   # Brevard, Volusia, Indian River, Orange, Seminole, Osceola
 DAYS = int(os.environ.get("COCORAHS_DAYS") or "10")
 KEEP_DAYS = 120
 TZ = ZoneInfo("America/New_York")
