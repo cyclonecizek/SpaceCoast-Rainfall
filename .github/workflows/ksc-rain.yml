@@ -1,7 +1,11 @@
 name: Collect KSC rain gauges
+# One long-running job collects every 5 minutes for ~5 hours, then starts its own successor.
+# This does not depend on GitHub's scheduler (which can be hours late or skip runs); the schedule
+# below is only a safety net that restarts the chain if it ever stops.
+# Data is committed to the "data" branch so the website itself is not rebuilt on every update.
 on:
   schedule:
-    - cron: '6,26,46 * * * *'
+    - cron: '17 */2 * * *'
   workflow_dispatch:
     inputs:
       start:
@@ -12,13 +16,14 @@ on:
         required: false
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: ksc-rain
   cancel-in-progress: false
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
       - name: Trust KSC intermediate certificate (verified against system roots)
@@ -31,17 +36,42 @@ jobs:
           openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt "$dir/issuer.pem"
           cat /etc/ssl/certs/ca-certificates.crt "$dir/issuer.pem" > "$dir/bundle.pem"
           echo "SSL_CERT_FILE=$dir/bundle.pem" >> "$GITHUB_ENV"
-      - name: Collect
+      - name: Open the data branch
+        run: |
+          set -euo pipefail
+          git config user.name "ksc-rain-collector"
+          git config user.email "actions@users.noreply.github.com"
+          if git fetch --depth 1 origin data 2>/dev/null; then
+            git worktree add -B data "$RUNNER_TEMP/out" FETCH_HEAD
+          else
+            git worktree add --detach "$RUNNER_TEMP/out"
+            cd "$RUNNER_TEMP/out"
+            git checkout --orphan data
+            git rm -rfq . || true
+            cp "$GITHUB_WORKSPACE"/data/*.json . 2>/dev/null || true
+          fi
+      - name: Collect every 5 minutes
         env:
           KSC_BACKFILL_START: ${{ github.event.inputs.start }}
           KSC_BACKFILL_END: ${{ github.event.inputs.end }}
-        run: python3 scripts/collect_ksc.py
-      - name: Collect CoCoRaHS daily reports
-        continue-on-error: true
-        run: python3 scripts/collect_cocorahs.py
-      - name: Commit
         run: |
-          git config user.name "ksc-rain-collector"
-          git config user.email "actions@users.noreply.github.com"
-          git add -A data
-          git diff --cached --quiet || (git commit -m "KSC rain gauges $(date -u +%Y-%m-%dT%H:%MZ)" && git push)
+          export DATA_DIR="$RUNNER_TEMP/out"
+          stop=$((SECONDS + 5*3600)); n=0
+          while [ $SECONDS -lt $stop ]; do
+            python3 scripts/collect_ksc.py || echo "KSC collection failed this round"
+            unset KSC_BACKFILL_START KSC_BACKFILL_END
+            if [ $((n % 6)) -eq 0 ]; then python3 scripts/collect_cocorahs.py || echo "CoCoRaHS collection failed this round"; fi
+            (
+              cd "$DATA_DIR" && git add -A . &&
+              if ! git diff --cached --quiet; then
+                git commit -q --amend -m "Rain gauge data $(date -u +%Y-%m-%dT%H:%MZ)" 2>/dev/null || git commit -q -m "Rain gauge data $(date -u +%Y-%m-%dT%H:%MZ)"
+                git push -q --force origin data || echo "push failed this round"
+              fi
+            )
+            n=$((n + 1)); sleep 300
+          done
+      - name: Start the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ksc-rain.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
