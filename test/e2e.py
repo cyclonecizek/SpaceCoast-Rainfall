@@ -41,6 +41,18 @@ GRIB=open(ROOT+'/test/sample.grib2.gz','rb').read()
 log=[]
 def handle(route):
     u=route.request.url
+    if 'network.py' in u:
+        if 'FL_ASOS' in u: return route.fulfill(body=json.dumps({'features':[{'id':'X26','properties':{'sid':'X26','sname':'SEBASTIAN MUNI','online':True},'geometry':{'coordinates':[-80.49,27.81]}},{'id':'MIA','properties':{'sid':'MIA','sname':'MIAMI'},'geometry':{'coordinates':[-80.3,25.8]}}]}),content_type='application/json')
+        if 'FLCOCORAHS' in u or 'FL_COOP' in u:
+            pre='FL-BV-' if 'COCO' in u else 'TITF1'
+            return route.fulfill(body=json.dumps({'features':[{'id':pre+str(i),'properties':{'sid':pre+str(i),'sname':'TITUSVILLE %d.1 SW'%i},'geometry':{'coordinates':[-80.85+0.06*i,28.35+0.07*i]}} for i in range(1,6 if 'COCO' in u else 2)]}),content_type='application/json')
+        return route.fulfill(body=json.dumps({'features':[]}),content_type='application/json')
+    if 'daily.py' in u:
+        log.append(u); ids=u.split('stations=')[1].split('&')[0].split(','); rows=['station,day,precip_in']
+        for s_ in ids:
+            for d in range(4): rows.append(f"{s_},{(now-dt.timedelta(days=d)):%Y-%m-%d},{[2.4,1.1,0.3,'M'][d]}")
+        return route.fulfill(body='\n'.join(rows)+'\n',content_type='text/plain')
+    if 'cocorahs.json' in u: return route.fulfill(status=404,body='x')
     if 'asos.py' in u: log.append(u); return route.fulfill(body=iem_csv(),content_type='text/plain')
     if 'tile.py' in u: return route.abort()
     if 'api.weather.gov/alerts' in u: return route.fulfill(body=ALERTS,content_type='application/geo+json')
@@ -64,6 +76,7 @@ with sync_playwright() as p:
     print('src',json.dumps(pg.evaluate("Object.fromEntries(Object.entries(S.src).map(([k,v])=>[k,v.state+': '+v.detail]))"),indent=1))
     print('mrms',pg.evaluate("JSON.stringify({a:new Date(S.mrms.a).toISOString(),b:new Date(S.mrms.b).toISOString(),p:S.mrms.products,files:S.mrms.files.length})"))
     print('gauges',pg.evaluate("[...S.gauges.values()].filter(g=>g.net!='KSC').map(g=>g.id+' '+g.src+' '+(g.total==null?'-':g.total.toFixed(2))+(g.suspect?' SUS':'')+' '+g.flags.map(f=>f.k)).join(' | ')"))
+    print('daily',pg.evaluate("[...S.gauges.values()].filter(g=>g.daily).map(g=>g.id+' '+(g.total==null?'-':g.total.toFixed(2))+' '+g.flags.map(f=>f.k)).join(' | ')"),'| X26:',pg.evaluate("S.gauges.has('KX26')"))
     print('ksc',pg.evaluate("[...S.gauges.values()].filter(g=>g.net=='KSC').map(g=>g.id+' '+g.total.toFixed(2)+(g.suspect?' SUS':'')).join(' | ')"))
     print(pg.evaluate("briefText()"))
     pg.click('#filters button[data-net="KSC"]'); pg.wait_for_timeout(400)
@@ -71,7 +84,7 @@ with sync_playwright() as p:
     pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(400); pg.screenshot(path='/tmp/f1.png')
     print('air only ->',pg.evaluate("[S.kinds, document.querySelectorAll('#tab-sites tr.row').length]"))
     pg.click('#filters button[data-net="KSC"]'); pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(300); print('reset ->',pg.evaluate('[S.nets,S.kinds]'))
-    pg.mouse.click(700,700); pg.wait_for_timeout(500); print('query ->',pg.inner_text('.leaflet-popup-content').replace('\n',' | ')[:400]); pg.screenshot(path='/tmp/q1.png')
+    pg.evaluate('openQuery(M.A,28.6028,-80.6046)'); pg.wait_for_timeout(500); print('query ->',pg.inner_text('.leaflet-popup-content').replace('\n',' | ')[:400]); pg.screenshot(path='/tmp/q1.png')
     pg.click('button[data-q=pin]'); pg.wait_for_timeout(300); print('pinned',pg.evaluate('S.poi[S.poi.length-1]')); pg.evaluate("S.poi=POI_DEFAULT;store.set('poi',null)")
     n0=pg.evaluate("document.querySelectorAll('#mapA .gm.sus').length"); pg.check('#hideSus'); pg.wait_for_timeout(300); print('suspect markers',n0,'->',pg.evaluate("document.querySelectorAll('#mapA .gm.sus').length"),'| total markers',pg.evaluate("document.querySelectorAll('#mapA .gm').length"),'|',pg.inner_text('#legend')[-90:]); pg.uncheck('#hideSus')
     # 72 h preset, compare mode, hourly timeline

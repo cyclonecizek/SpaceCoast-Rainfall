@@ -15,9 +15,11 @@ Static dashboard (no build step, no server). Open `index.html`, or publish the f
 | Data | Source | Loaded by |
 |---|---|---|
 | MRMS radar rainfall (1 km) | NOAA Open Data bucket `noaa-mrms-pds` on AWS — GRIB2 decoded in the browser | browser |
-| Airfield gauges (KTTS, KXMR, KCOF, KTIX, KMLB + regional) | Iowa Environmental Mesonet `asos.py`; api.weather.gov fills any station IEM does not return | browser |
+| Airfield gauges (KTTS, KXMR, KCOF, KTIX, KMLB + every other ASOS/AWOS IEM lists inside the map box) | Iowa Environmental Mesonet `asos.py`; api.weather.gov fills any station IEM does not return | browser |
 | KSC/CCSFS tipping-bucket gauges | Spaceport Weather Data Archive "Past 24 Hour" rainfall page | GitHub Action (the archive does not allow browser requests), or paste the table in the **Sources** tab |
 | USGS precipitation gauges | USGS NWIS instantaneous values | browser |
+| CoCoRaHS daily gauges | CoCoRaHS data export, six counties (GitHub Action → `data/cocorahs.json`); IEM daily summaries if that file is missing | Action, browser fallback |
+| NWS COOP daily gauges | Iowa Environmental Mesonet daily summaries | browser |
 | Flood watches / warnings | api.weather.gov | browser |
 
 Any custom period works for MRMS and the airfield gauges straight away. KSC gauges cover whatever hours
@@ -44,6 +46,9 @@ is bundled in `vendor/`. If a basemap is blocked on your network the page tries 
   Pass 2, then Pass 1, then Radar-only for each file and tells you which it used.
 - **METAR gauges**: hourly precipitation (`p01i`) is a running total that resets after each routine observation;
   finished hours contribute their peak, the hour in progress contributes its running value.
+- **Daily gauges (CoCoRaHS, COOP)**: each report is a 24-hour total read around 7 AM. A report is counted when the
+  middle of its 24 hours falls inside the selected period, so totals never match the period exactly. They are
+  drawn as squares and left out of maxima, the gauge analysis and the radar comparison.
 - **"Check gauge"**: a gauge reading 0.00" while MRMS over it or neighboring gauges show 0.75" or more.
   These are left out of maxima, the gauge analysis and the radar-vs-gauge bias (toggle in Sources).
 - **Gauge analysis**: inverse-distance weighting, shown only within 10 km of a gauge.
