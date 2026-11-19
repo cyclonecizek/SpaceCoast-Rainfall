@@ -78,6 +78,20 @@ const toInput = (ms, tz) => new Date(ms + (tz === 'UTC' ? 0 : tzOff(ms, TZ.ET)))
 function fromInput(v, tz) { const g = Date.parse(v + ':00Z'); if (!isFinite(g)) return NaN; if (tz === 'UTC') return g; let ms = g - tzOff(g, TZ.ET); return g - tzOff(ms, TZ.ET); }
 const ymd = ms => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
 
+/* Installation grouping. Explicit for the built-in key sites; by position for gauges and added points (approximate). */
+const AREAS = [['KSC', 'Kennedy Space Center'], ['CCSFS', 'Cape Canaveral SFS'], ['PSFB', 'Patrick SFB'], ['OTHER', 'Surrounding area']];
+const SITE_AREA = { 'LC-39A': 'KSC', 'LC-39B': 'KSC', 'SLF (KTTS)': 'KSC', 'VAB / LCC': 'KSC', 'Patrick SFB (KCOF)': 'PSFB', 'Space Coast Rgnl (KTIX)': 'OTHER', 'Melbourne (KMLB)': 'OTHER', 'Merritt Island (KCOI)': 'OTHER' };
+const GAUGE_AREA = { KTTS: 'KSC', KXMR: 'CCSFS', KCOF: 'PSFB' };
+function areaOf(lat, lon) {
+  if (km(lat, lon, 28.2349, -80.6101) < 6) return 'PSFB';
+  if (lat >= 28.39 && lat <= 28.585 && lon >= -80.61 && lon <= -80.50) return 'CCSFS';      // east of the Banana River
+  if (lat >= 28.46 && lat <= 28.76 && lon >= -80.78 && lon <= -80.55) return 'KSC';
+  return 'OTHER';
+}
+const siteArea = r => SITE_AREA[r.name] || areaOf(r.lat, r.lon);
+// Only the airfield sensors and the archive tipping buckets belong to an installation; public gauges (USGS, CoCoRaHS, COOP) are always "surrounding".
+const gaugeArea = g => GAUGE_AREA[g.id] || (g.net === 'KSC' ? (areaOf(g.lat, g.lon) === 'CCSFS' ? 'CCSFS' : 'KSC') : 'OTHER');
+
 /* ───────────────────────── state ───────────────────────── */
 const S = {
   tz: store.get('tz', 'UTC'), preset: store.get('preset', 24), a: 0, b: 0,
@@ -521,7 +535,7 @@ function poiRows() { return shownPoi().map(p => { const mr = S.mrms ? sample(S.m
 const swatch = v => v == null ? '<span class="muted">—</span>' : `<span class="sw" style="background:${colorFor(v) || 'transparent'};color:${colorFor(v) ? inkFor(colorFor(v)) : 'inherit'}">${v.toFixed(2)}</span>`;
 function renderSites() {
   const rows = poiRows(); let h = `<table><thead><tr><th>Site</th><th class="n" title="MRMS radar estimate at the site">MRMS</th><th class="n" title="Interpolated from surrounding gauges (within 10 km)">Gauges</th><th>Nearest gauge</th>${S.hourly ? '<th class="n" title="Highest single-hour MRMS total">Peak 1 h</th>' : ''}</tr></thead><tbody>`;
-  for (const k of Object.keys(POI_KIND)) { const rs = rows.filter(r => r.kind === k); if (!rs.length) continue; h += `<tr class="sec"><td colspan="${S.hourly ? 5 : 4}">${POI_KIND[k]}</td></tr>`; for (const r of rs) h += `<tr class="row${S.sel.includes('poi:' + r.name) ? ' sel' : ''}" data-id="poi:${esc(r.name)}" data-ll="${r.lat},${r.lon}"><td>${esc(r.name)}</td><td class="n">${swatch(r.mrms)}</td><td class="n">${swatch(r.an)}</td><td class="nw">${r.ng ? `${esc(r.ng.g.id)} <b>${r.ng.g.total.toFixed(2)}"</b> <span class="muted">${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'}</span>` : '<span class="muted">—</span>'}</td>${S.hourly ? `<td class="n">${fin(r.pk)}</td>` : ''}</tr>`; }
+  for (const [k, name] of AREAS) { const rs = rows.filter(r => siteArea(r) === k); if (!rs.length) continue; h += `<tr class="sec"><td colspan="${S.hourly ? 5 : 4}">${name}</td></tr>`; for (const r of rs) h += `<tr class="row${S.sel.includes('poi:' + r.name) ? ' sel' : ''}" data-id="poi:${esc(r.name)}" data-ll="${r.lat},${r.lon}"><td>${esc(r.name)}</td><td class="n">${swatch(r.mrms)}</td><td class="n">${swatch(r.an)}</td><td class="nw">${r.ng ? `${esc(r.ng.g.id)} <b>${r.ng.g.total.toFixed(2)}"</b> <span class="muted">${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'}</span>` : '<span class="muted">—</span>'}</td>${S.hourly ? `<td class="n">${fin(r.pk)}</td>` : ''}</tr>`; }
   h += '</tbody></table><div class="box small muted">MRMS = radar estimate in the 1-km cell over the site. Gauges = distance-weighted from surrounding gauges; blank when no gauge is within 10 km. Inches.</div>';
   $('tab-sites').innerHTML = h;
 }
@@ -570,6 +584,7 @@ function renderKpis() {
   const dl = [...S.gauges.values()].filter(g => S.nets.DAILY && g.daily && g.total != null); if (dl.length) notes.push(`${dl.length} once-a-day gauges (CoCoRaHS/COOP) are shown as squares. Their totals are 7 AM-to-7 AM readings that fall inside the period, so they are left out of maxima, the gauge analysis and the radar comparison.`);
   const part = [...S.gauges.values()].filter(g => g.flags.some(f => f.k === 'partial')); if (part.length) notes.push(`${part.length} gauge${part.length > 1 ? 's have' : ' has'} data for only part of the period (left out of maxima)`);
   if (S.fellBack && IEMT[$('rasterA').value]) notes.push('MRMS numbers could not be loaded, so the map is showing the IEM reference picture (fixed look-back ending now, IEM colors). Key-site MRMS values are unavailable.');
+  if (S.reportErr) notes.push('The PDF report could not be created: ' + S.reportErr);
   if (S.noBase) notes.push('Background map tiles are blocked on this network (CARTO, OpenStreetMap and Esri were all tried). Rainfall shading, gauges and key sites still plot correctly; only the street/imagery backdrop is missing.');
   const bad = Object.keys(SRC).filter(x => S.src[x] && S.src[x].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(x => SRC[x].split(' (')[0]).join('; ')} — see Sources tab`);
   $('banner').hidden = !notes.length; $('banner').innerHTML = notes.map(esc).join('<br>');
@@ -631,7 +646,7 @@ function briefText() {
   if (s.top) L2.push(`Highest gauge: ${s.top.total.toFixed(2)}" at ${s.top.id} (${s.top.name.replace(/^K\w+ · /, '')}).`);
   if (s.cape) L2.push(`Highest MRMS radar estimate over the Cape/KSC: ${s.cape.max.toFixed(2)}" (${nearPoi(s.cape.lat, s.cape.lon)}); area average ${s.cape.mean.toFixed(2)}".`);
   const key = [...S.gauges.values()].filter(g => g.key && g.total != null); if (key.length) L2.push('Airfield gauges: ' + key.map(g => `${g.id} ${g.total.toFixed(2)}"${g.suspect ? ' (check gauge)' : ''}`).join(', ') + '.');
-  const pr = poiRows(); if (pr.some(r => r.mrms != null)) for (const k of Object.keys(POI_KIND)) { const rs = pr.filter(r => r.kind === k && r.mrms != null); if (rs.length) L2.push(`${POI_KIND[k]} (MRMS): ` + rs.map(r => `${r.name} ${r.mrms.toFixed(2)}"`).join(', ') + '.'); }
+  const pr = poiRows(); if (pr.some(r => r.mrms != null)) for (const [k, name] of AREAS) { const rs = pr.filter(r => siteArea(r) === k && r.mrms != null); if (rs.length) L2.push(`${name} (MRMS): ` + rs.map(r => `${r.name} ${r.mrms.toFixed(2)}"`).join(', ') + '.'); }
   if (s.rate) L2.push(`Heaviest gauge rate in the final hour: ${s.rate.last1.toFixed(2)}" at ${s.rate.id}.`);
   if (s.ratio) L2.push(`MRMS is running ${Math.abs((s.ratio - 1) * 100).toFixed(0)}% ${s.ratio >= 1 ? 'above' : 'below'} ${s.pairs.length} gauges overall.`);
   L2.push(s.floods.length ? 'Active flood alerts: ' + s.floods.map(f => `${f.properties.event} (${(f.properties.areaDesc || '').split(';')[0]}) until ${fmt(Date.parse(f.properties.ends || f.properties.expires), 'ET')}`).join('; ') + '.' : 'No active flood alerts for Brevard and neighboring counties.');
@@ -640,10 +655,10 @@ function briefText() {
   return L2.join('\n');
 }
 function csvText() {
-  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_in', 'gauge_analysis_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc']];
+  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'installation', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_in', 'gauge_analysis_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc']];
   const A = new Date(S.a).toISOString(), B = new Date(S.b).toISOString();
-  for (const r of poiRows()) rows.push(['key site', r.name, POI_KIND[r.kind], r.lat, r.lon, '', '', r.mrms == null ? '' : r.mrms.toFixed(2), r.an == null ? '' : r.an.toFixed(2), r.pk == null ? '' : r.pk.toFixed(2), '', 'MRMS', A, B]);
-  for (const g of [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total)) rows.push(['gauge', g.id, g.name, g.lat, g.lon, g.total.toFixed(2), g.last1 == null ? '' : g.last1.toFixed(2), g.mrms == null ? '' : g.mrms.toFixed(2), '', '', g.flags.map(f => f.k).join(' '), g.src, A, B]);
+  for (const r of poiRows()) rows.push(['key site', AREAS.find(x => x[0] === siteArea(r))[1], r.name, POI_KIND[r.kind], r.lat, r.lon, '', '', r.mrms == null ? '' : r.mrms.toFixed(2), r.an == null ? '' : r.an.toFixed(2), r.pk == null ? '' : r.pk.toFixed(2), '', 'MRMS', A, B]);
+  for (const g of [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total)) rows.push(['gauge', AREAS.find(x => x[0] === gaugeArea(g))[1], g.id, g.name, g.lat, g.lon, g.total.toFixed(2), g.last1 == null ? '' : g.last1.toFixed(2), g.mrms == null ? '' : g.mrms.toFixed(2), '', '', g.flags.map(f => f.k).join(' '), g.src, A, B]);
   return rows.map(r => r.map(q).join(',')).join('\r\n');
 }
 
@@ -679,6 +694,7 @@ function init() {
   $('btnBrief').onclick = () => { document.body.classList.toggle('brief'); $('btnBrief').textContent = document.body.classList.contains('brief') ? 'Exit brief mode' : 'Brief mode'; setTimeout(() => { M.A.map.invalidateSize(); M.B.map.invalidateSize(); renderChart(); renderScatter(); }, 60); };
   $('btnTheme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; store.set('theme', t); $('btnTheme').textContent = t === 'dark' ? 'Light' : 'Dark'; };
   $('btnCopy').onclick = async () => { const t = briefText(); try { await navigator.clipboard.writeText(t); $('btnCopy').textContent = 'Copied'; } catch (e) { const w = $('tab-sources'); document.querySelector('[data-tab=sources]').click(); w.insertAdjacentHTML('afterbegin', `<div class="box"><h3>Summary (select and copy)</h3><textarea style="min-height:200px">${esc(t)}</textarea></div>`); } setTimeout(() => $('btnCopy').textContent = 'Copy summary', 1500); };
+  $('btnReport').onclick = async () => { const bn = $('btnReport'); if (bn.disabled) return; bn.disabled = true; bn.textContent = 'Building report…'; try { await generateReport(); bn.textContent = 'Report saved'; } catch (e) { bn.textContent = 'Report failed'; console.error(e); S.reportErr = e.message; renderKpis(); } setTimeout(() => { bn.disabled = false; bn.textContent = 'Report (PDF)'; }, 2500); };
   $('btnCsv').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csvText()], { type: 'text/csv' })); a.download = `space-coast-rainfall_${ymd(S.a)}-${ymd(S.b)}.csv`; document.body.appendChild(a); a.click(); a.remove(); };
   for (const id of ['rasterA', 'rasterB', 'smooth', 'lyA', 'lyR']) $(id).onchange = renderMaps;
   $('hideSus').checked = store.get('hideSus', false); $('hideSus').onchange = () => { store.set('hideSus', $('hideSus').checked); renderMaps(); }; $('opac').oninput = renderMaps;

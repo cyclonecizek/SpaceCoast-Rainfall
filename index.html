@@ -25,6 +25,7 @@
     <button id="btnRefresh" title="Reload all sources">Refresh</button>
     <label class="chk" title="Reload every 5 minutes while a rolling preset is selected"><input type="checkbox" id="auto" checked> Auto 5 min</label>
     <button id="btnBrief" title="Hide controls for projecting">Brief mode</button>
+    <button id="btnReport" class="primary" title="Create a PDF summary of the selected period for leadership">Report (PDF)</button>
     <button id="btnCopy" title="Copy a text summary for email or slides">Copy summary</button>
     <button id="btnCsv" title="Download the gauge and key-site tables">CSV</button>
     <button id="btnTheme" title="Switch light / dark">Light</button>
@@ -116,7 +117,10 @@
 <div id="tip" class="tip" hidden></div>
 
 <script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/jspdf/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf/jspdf.plugin.autotable.min.js"></script>
 <script src="mrms.js"></script>
 <script src="app.js"></script>
+<script src="report.js"></script>
 </body>
 </html>

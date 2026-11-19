@@ -65,11 +65,11 @@ def handle(route):
     if 'raw.githubusercontent.com' in u: return route.fulfill(status=404,body='x')
     if 'ksc_rain.json' in u: return route.fulfill(body=ksc_json(),content_type='application/json')
     if 'localhost' in u: return route.continue_()
-    return route.fulfill(body=TILE,content_type='image/png')
+    return route.fulfill(body=TILE,content_type='image/png',headers={'Access-Control-Allow-Origin':'*'})
 srv=http.server.ThreadingHTTPServer(('127.0.0.1',8765),functools.partial(http.server.SimpleHTTPRequestHandler,directory=ROOT)); srv.RequestHandlerClass.log_message=lambda *a:None
 threading.Thread(target=srv.serve_forever,daemon=True).start()
 with sync_playwright() as p:
-    b=p.chromium.launch(channel='chrome',args=['--no-sandbox']); pg=b.new_page(viewport={'width':1680,'height':1050})
+    b=p.chromium.launch(channel='chrome',args=['--no-sandbox']); pg=b.new_page(accept_downloads=True,viewport={'width':1680,'height':1050})
     errs=[]; pg.on('pageerror',lambda e:errs.append(str(e))); pg.on('console',lambda m: errs.append(m.text) if m.type=='error' and 'ERR_FAILED' not in m.text else None)
     pg.route('**/*',handle); pg.goto('http://localhost:8765/index.html')
     pg.wait_for_function("S.loadedAt>0",timeout=90000); pg.wait_for_timeout(800)
@@ -79,7 +79,7 @@ with sync_playwright() as p:
     print('gauges',pg.evaluate("[...S.gauges.values()].filter(g=>g.net!='KSC').map(g=>g.id+' '+g.src+' '+(g.total==null?'-':g.total.toFixed(2))+(g.suspect?' SUS':'')+' '+g.flags.map(f=>f.k)).join(' | ')"))
     print('daily',pg.evaluate("[...S.gauges.values()].filter(g=>g.daily).map(g=>g.id+' '+(g.total==null?'-':g.total.toFixed(2))+' '+g.flags.map(f=>f.k)).join(' | ')"),'| X26:',pg.evaluate("S.gauges.has('KX26')"))
     print('ksc',pg.evaluate("[...S.gauges.values()].filter(g=>g.net=='KSC').map(g=>g.id+' '+g.total.toFixed(2)+(g.suspect?' SUS':'')).join(' | ')"))
-    print(pg.evaluate("briefText()"))
+    print(pg.evaluate("briefText()")); print('sections',pg.evaluate("[...document.querySelectorAll('#tab-sites tr.sec')].map(x=>x.innerText).join(' | ')")); print(pg.evaluate('csvText().split("\\n").slice(0,3).join(" // ")')[:300])
     pg.click('#filters button[data-net="KSC"]'); pg.wait_for_timeout(400)
     print('KSC only ->',pg.evaluate("[S.nets, stats().top.id, document.querySelectorAll('#tab-gauges tr.row').length, document.querySelectorAll('#mapA .gm').length]"))
     pg.click('#filters button[data-kind="air"]'); pg.wait_for_timeout(400); pg.screenshot(path='/tmp/f1.png')
@@ -88,6 +88,8 @@ with sync_playwright() as p:
     pg.evaluate('openQuery(M.A,28.6028,-80.6046)'); pg.wait_for_timeout(500); print('query ->',pg.inner_text('.leaflet-popup-content').replace('\n',' | ')[:400]); pg.screenshot(path='/tmp/q1.png')
     pg.click('button[data-q=pin]'); pg.wait_for_timeout(300); print('pinned',pg.evaluate('S.poi[S.poi.length-1]')); pg.evaluate("S.poi=POI_DEFAULT;store.set('poi',null)")
     n0=pg.evaluate("document.querySelectorAll('#mapA .gm.sus').length"); pg.check('#hideSus'); pg.wait_for_timeout(300); print('suspect markers',n0,'->',pg.evaluate("document.querySelectorAll('#mapA .gm.sus').length"),'| total markers',pg.evaluate("document.querySelectorAll('#mapA .gm').length"),'|',pg.inner_text('#legend')[-90:]); pg.uncheck('#hideSus')
+    with pg.expect_download(timeout=60000) as dl: pg.click('#btnReport')
+    dl.value.save_as('/tmp/report.pdf'); print('report',dl.value.suggested_filename, os.path.getsize('/tmp/report.pdf'))
     # 72 h preset, compare mode, hourly timeline
     pg.click('#presets button[data-h="72"]'); pg.wait_for_function("S.loadedAt>0 && S.mrms && (S.mrms.b-S.mrms.a)>70*36e5",timeout=90000)
     print('72h parts',pg.evaluate("S.mrms.parts.map(p=>p.hours).join('+')"))
