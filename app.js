@@ -202,10 +202,22 @@ async function collectorJson(name, localPath) {
   if (!got.length) throw Error('not found');
   return got.sort((x, y) => Date.parse(y.updated || 0) - Date.parse(x.updated || 0))[0];
 }
+const lastRainText = lr => `${lr.exact ? '' : 'about '}${fmt(lr.t)}`;
+const agoText = t => { const m = (Date.now() - t) / 60000; return m < 90 ? `${Math.round(m)} min ago` : m < 48 * 60 ? `${(m / 60).toFixed(m < 600 ? 1 : 0)} h ago` : `${(m / 1440).toFixed(1)} days ago`; };
+/* Has the whole KSC/CCSFS network gone quiet while nearby airfield gauges keep recording rain?
+   The archive shows a dead gauge as 0.00, so silence alone proves nothing; rain elsewhere since then is the evidence. */
+function evalKscOutage() {
+  S.kscOut = null; const lr = S.kscLast; if (!lr) return;
+  const ksc = [...S.gauges.values()].filter(g => g.net === 'KSC'); if (!ksc.length) return;
+  const dataEnd = Math.max(...ksc.map(g => g.dataEnd || 0)); if (dataEnd - lr.t < 2 * H) return;            // quiet for under two hours: too soon to say
+  const near = [...S.gauges.values()].filter(g => g.net === 'ASOS' && g.series.length && km(g.lat, g.lon, 28.52, -80.63) < 45);
+  const ev = near.map(g => { const s = g.series, c0 = cumAt(s, lr.t); return { g, v: s[s.length - 1].c - (c0 == null ? s[0].c : c0) }; }).filter(e => e.v >= 0.05).sort((x, y) => y.v - x.v);
+  if (ev.length && ev[0].v >= 0.10) S.kscOut = { t: lr.t, exact: lr.exact, ev };
+}
 async function loadKSC() {
   let remote = {}, note = '';
-  let age = null;
-  try { const j = await collectorJson('ksc_rain.json', CFG.kscJson); remote = j.hourly || {}; age = j.updated ? (Date.now() - Date.parse(j.updated)) / 60000 : null; note = `collector last ran ${j.updated ? fmt(Date.parse(j.updated)) : 'unknown'}${j.page_as_of ? `, archive page as of ${fmt(Date.parse(j.page_as_of))}` : ''}`; }
+  let age = null, lastRain = {};
+  try { const j = await collectorJson('ksc_rain.json', CFG.kscJson); remote = j.hourly || {}; lastRain = j.last_rain || {}; age = j.updated ? (Date.now() - Date.parse(j.updated)) / 60000 : null; note = `collector last ran ${j.updated ? fmt(Date.parse(j.updated)) : 'unknown'}${j.page_as_of ? `, archive page as of ${fmt(Date.parse(j.page_as_of))}` : ''}`; }
   catch (e) { note = 'collector file not found (' + e.message + ')'; }
   const merged = {}; for (const src of [S.kscLocal, remote]) for (const k in src) merged[k] = Object.assign(merged[k] || {}, src[k]);
   const hours = Object.keys(merged).sort(); if (!hours.length) { setSrc('ksc', 'warn', `No KSC gauge data yet — ${note}. Paste the archive table below, or enable the collector.`, CFG.kscPage); return; }
@@ -213,9 +225,16 @@ async function loadKSC() {
   for (const id of ids) {
     const ll = KSC_RG[+id]; if (!ll) continue; let c = 0; const series = [];
     for (const h of hours) { const v = merged[h][id]; if (v == null) continue; const t = Date.parse(h); if (!series.length) series.push({ t, c: 0 }); c += v; series.push({ t: t + H, c }); }
-    addGauge({ id: 'RG' + String(id).padStart(2, '0'), name: `KSC rain gauge ${id}`, lat: ll[0], lon: ll[1], net: 'KSC', src: 'KSC archive', series, hourly: true });
+    // when this gauge last recorded rain: to the second from the collector, otherwise the end of its last wet hour
+    let lr = null; const wet = hours.filter(h => (merged[h][id] || 0) > 0).pop();
+    if (wet) { const ex = lastRain[id]; lr = ex && ex[1] === 1 && ex[0].slice(0, 13) === wet.slice(0, 13) ? { t: Date.parse(ex[0]), exact: true } : { t: Math.min(Date.parse(wet) + H, Date.now()), exact: false }; }
+    addGauge({ id: 'RG' + String(id).padStart(2, '0'), name: `KSC rain gauge ${id}`, lat: ll[0], lon: ll[1], net: 'KSC', src: 'KSC archive', series, hourly: true, lastRain: lr, dataEnd: Date.parse(hours[hours.length - 1]) + H });
   }
+  const lrs = [...S.gauges.values()].filter(g => g.net === 'KSC' && g.lastRain).sort((x, y) => y.lastRain.t - x.lastRain.t), exa = lrs.filter(g => g.lastRain.exact && lrs[0].lastRain.t - g.lastRain.t < H);
+  S.kscLast = !lrs.length ? null : exa.length ? exa[0].lastRain : lrs[0].lastRain;   // to-the-second time when the collector has it, else end of the last wet hour
+  note += S.kscLast ? ` · last rain recorded at any gauge ${lastRainText(S.kscLast)}` : ' · no rain recorded in the stored record';
   S.kscAge = age; const late = age != null && age > 40;
+  S.kscNote = note;
   setSrc('ksc', late ? 'warn' : 'ok', `${late ? `Collector has not updated for ${age >= 120 ? (age / 60).toFixed(1) + ' h' : Math.round(age) + ' min'} — check the Actions tab. ` : ''}${ids.size} gauges · hourly data ${fmt(Date.parse(hours[0]))} → ${fmt(Date.parse(hours[hours.length - 1]) + H)} · ${note}`, CFG.kscPage);
 }
 async function loadUSGS(a, b) {
@@ -267,7 +286,7 @@ async function loadDaily(a, b) {
   setSrc('daily', total ? 'ok' : 'warn', notes.join(' · ') + (total ? ' · 24-hour totals read about 7 AM, so they never line up exactly with the selected period' : ''), url || CFG.iem + 'request/daily.phtml');
 }
 function computeGaugeTotals() {
-  const { a, b } = S;
+  const { a, b } = S; evalKscOutage();
   for (const g of S.gauges.values()) {
     const s = g.series; g.flags = []; g.total = null; g.last1 = null; if (!s.length) continue;
     // a daily report counts when the middle of its 24 hours falls inside the period
@@ -279,7 +298,9 @@ function computeGaugeTotals() {
     g.first = s[0].t; g.lastT = s[s.length - 1].t;
     if (g.first > a + 80 * 60000) g.flags.push({ k: 'partial', t: `Data starts ${fmt(g.first)} — total covers only part of the period` });
     if (g.lastT < Math.min(b, Date.now()) - 2.6 * H) g.flags.push({ k: 'stale', t: `Last report ${fmt(g.lastT)}` });
+    if (g.net === 'KSC' && S.kscOut && b > S.kscOut.t + 90 * 60000) g.flags.push({ k: 'outage', t: `No rain recorded by any KSC/CCSFS gauge after ${lastRainText(S.kscOut)} although nearby airfield gauges kept recording — this total counts rain only up to then` });
   }
+  if (S.src.ksc && S.kscNote != null && S.src.ksc.state !== 'err' && S.src.ksc.state !== 'load') { const out = S.kscOut; S.src.ksc.detail = (out ? `Network appears down — no rain recorded by any gauge since ${lastRainText(out)} while airfield gauges kept recording. ` : '') + S.src.ksc.detail.replace(/^Network appears down[^.]*\. /, ''); if (out) S.src.ksc.state = 'warn'; }
 }
 function qcGauges() {
   const gs = [...S.gauges.values()].filter(g => g.total != null);
@@ -295,7 +316,10 @@ function qcGauges() {
 }
 const goodGauges = () => [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null && !(S.excludeSuspect && g.suspect));
 const shownPoi = () => S.poi.filter(p => S.kinds[p[1]]);
-const fullGauges = () => goodGauges().filter(g => !g.flags.some(f => f.k === 'partial' || f.k === 'daily'));
+const fullGauges = () => goodGauges().filter(g => !g.flags.some(f => f.k === 'partial' || f.k === 'daily' || f.k === 'outage'));
+const isOut = g => g.flags.some(f => f.k === 'outage');
+// for "highest gauge": outage-affected gauges still count, as a lower bound
+const topPool = () => goodGauges().filter(g => !g.flags.some(f => f.k === 'partial' || f.k === 'daily'));
 
 /* ───────────────────────── MRMS ───────────────────────── */
 const gridCache = new Map();
@@ -317,11 +341,17 @@ const productOrder = () => S.product === 'auto' ? ['pass2', 'pass1', 'radar'] : 
 const PNAME = { pass2: 'Multi-sensor Pass 2 (gauge-corrected)', pass1: 'Multi-sensor Pass 1', radar: 'Radar-only' };
 async function loadMRMS(a, b, id) {
   setSrc('mrms', 'load', 'Finding the latest available hour…', CFG.mrmsBucket + 'index.html#CONUS/');
-  const nH = Math.max(1, Math.round((b - a) / H)); let bH = Math.floor(Math.min(b, Date.now()) / H) * H, aH = bH - nH * H, first = null, err = null;
-  for (let back = 0; back < 4 && !first; back++, bH -= H, aH -= H) { const parts = MRMS.decompose(aH, bH); try { first = { parts, res: await fetchMrmsFile(parts[0].end, parts[0].hours, productOrder()) }; break; } catch (e) { err = e; if (/could not reach/i.test(e.message)) break; } }
-  if (!first) throw err || Error('The period is shorter than one hour of MRMS data.');
-  const parts = first.parts, results = [first.res];
-  for (let i = 1; i < parts.length; i++) { if (id !== S.loadId) return; setSrc('mrms', 'load', `Downloading file ${i + 1} of ${parts.length}…`); results.push(await fetchMrmsFile(parts[i].end, parts[i].hours, productOrder())); }
+  const nH = Math.max(1, Math.round((b - a) / H)); let bH = Math.floor(Math.min(b, Date.now()) / H) * H, aH = bH - nH * H, err = null;
+  // One product for the whole total (never a mix): newest hour first, then the best product that has every file for that window.
+  let parts = null, results = null;
+  for (let back = 0; back < 4 && !results; back++, bH -= H, aH -= H) {
+    const tryParts = MRMS.decompose(aH, bH);
+    for (const p of productOrder()) {
+      try { const rs = []; for (let i = 0; i < tryParts.length; i++) { if (id !== S.loadId) return; if (i) setSrc('mrms', 'load', `Downloading file ${i + 1} of ${tryParts.length}…`); rs.push(await fetchMrmsFile(tryParts[i].end, tryParts[i].hours, [p])); } parts = tryParts; results = rs; break; }
+      catch (e) { err = e; if (/could not reach/i.test(e.message)) throw e; }
+    }
+  }
+  if (!results) throw err || Error('No MRMS files were found for this period.');
   const g0 = results[0].grid, sum = new Float32Array(g0.data.length);
   for (const r of results) for (let i = 0; i < sum.length; i++) { const v = r.grid.data[i]; sum[i] += (v >= 0 ? v : NaN) * MM; }
   const used = [...new Set(results.map(r => r.product))];
@@ -332,7 +362,7 @@ async function loadHourly() {
   if (!S.mrms) return; const { a, b } = S.mrms, n = Math.round((b - a) / H); if (n > 120) { $('tlInfo').textContent = 'Hourly timeline is limited to 120 hours — shorten the period.'; return; }
   const id = S.loadId, ends = Array.from({ length: n }, (_, i) => a + (i + 1) * H), grids = new Array(n); let done = 0, fail = 0;
   $('btnHourly').disabled = true;
-  const work = async () => { while (ends.length) { const k = n - ends.length, e = ends.shift(); try { grids[k] = (await fetchMrmsFile(e, 1, productOrder())).grid; } catch (err) { fail++; grids[k] = null; } done++; $('tlInfo').textContent = `Loading hourly MRMS… ${done} of ${n}`; } };
+  const work = async () => { while (ends.length) { const k = n - ends.length, e = ends.shift(); try { grids[k] = (await fetchMrmsFile(e, 1, [S.mrms.products[0]].concat(productOrder().filter(p => p !== S.mrms.products[0])))).grid; } catch (err) { fail++; grids[k] = null; } done++; $('tlInfo').textContent = `Loading hourly MRMS… ${done} of ${n}`; } };
   await Promise.all([work(), work(), work(), work()]); $('btnHourly').disabled = false; if (id !== S.loadId) return;
   const g0 = grids.find(Boolean); if (!g0) { $('tlInfo').textContent = 'Hourly MRMS files could not be loaded.'; return; }
   const N = g0.data.length, cum = [], run = new Float32Array(N), peak = new Float32Array(N);
@@ -435,7 +465,7 @@ function setBase(o, name) { clearTimeout(o.baseTimer); let ok = 0, bad = 0; cons
 function shownEnd() { return S.hourly && S.tl >= 0 && S.tl < S.hourly.n - 1 ? S.hourly.a + (S.tl + 1) * H : null; }
 function gaugeShown(g) { const t = shownEnd(); if (t == null || g.daily) return g.total; const c1 = cumAt(g.series, t), c0 = cumAt(g.series, S.a); return c1 == null ? null : c1 - (c0 || 0); }
 function rasterFor(type) {
-  if (type === 'mrms') { if (S.hourly && S.tl >= 0) return { g: S.hourly.geo, d: S.hourly.cum[S.tl], L: LEVELS, C: RGB }; return S.mrms ? { g: S.mrms.grid, d: S.mrms.grid.data, L: LEVELS, C: RGB } : null; }
+  if (type === 'mrms') { if (S.hourly && S.tl >= 0 && S.tl < S.hourly.n - 1) return { g: S.hourly.geo, d: S.hourly.cum[S.tl], L: LEVELS, C: RGB }; return S.mrms ? { g: S.mrms.grid, d: S.mrms.grid.data, L: LEVELS, C: RGB } : null; }
   if (type === 'idw') return S.idw ? { g: S.idw, d: S.idw.data, L: LEVELS, C: RGB } : null;
   if (type === 'diff') return S.diff ? { g: S.diff, d: S.diff.data, L: DLEVELS, C: DRGB } : null;
   if (type === 'peak') return S.hourly ? { g: S.hourly.geo, d: S.hourly.peak, L: LEVELS, C: RGB } : null;
@@ -465,7 +495,7 @@ function drawPoints(o) {
   {
     const z = o.map.getZoom(), t0 = shownEnd();
     for (const g of [...S.gauges.values()].filter(g => S.nets[g.net] && !(g.suspect && $('hideSus').checked)).sort((x, y) => (x.total || 0) - (y.total || 0))) {
-      const v = gaugeShown(g); if (v == null) continue; const col = colorFor(v) || '#eef3f8', part = g.flags.some(f => f.k === 'partial'); if (g.daily && t0 != null) continue;
+      const v = gaugeShown(g); if (v == null) continue; const col = colorFor(v) || '#eef3f8', part = g.flags.some(f => f.k === 'partial' || f.k === 'outage'); if (g.daily && t0 != null) continue;
       const lab = (g.key && z >= 9.5 ? g.id + ' ' : '') + v.toFixed(2);
       const icon = L.divIcon({ className: '', html: `<div class="gm${g.key ? ' key' : ''}${g.suspect ? ' sus' : ''}${part ? ' part' : ''}${g.daily ? ' day' : ''}" style="background:${col};color:${inkFor(col)}">${g.suspect ? (g.key ? g.id + ' ?' : '?') : lab}</div>`, iconSize: [g.key ? 74 : 40, 22], iconAnchor: [g.key ? 82 : 20, 11] });
       L.marker([g.lat, g.lon], { icon, zIndexOffset: (g.key ? 500 : 0) + Math.round(v * 10), title: g.name }).on('click', () => toggleSel(g.id)).bindPopup(gaugePopup(g)).addTo(o.gauges);
@@ -486,15 +516,15 @@ function drawPoints(o) {
   if (o.radar && !$('lyR').checked) { o.map.removeLayer(o.radar); o.radar = null; }
   if (!o.radar && $('lyR').checked) o.radar = L.tileLayer(`${CFG.iem}cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?_=${Math.floor(Date.now() / 300000)}`, { pane: 'lab', opacity: 0.7, maxZoom: 18, attribution: 'NEXRAD: IEM' }).addTo(o.map);
 }
-function poiMrms(p) { if (S.hourly && S.tl >= 0) return sample(S.hourly.geo, p[2], p[3], S.hourly.cum[S.tl]); return S.mrms ? sample(S.mrms.grid, p[2], p[3]) : null; }
+function poiMrms(p) { if (S.hourly && S.tl >= 0 && S.tl < S.hourly.n - 1) return sample(S.hourly.geo, p[2], p[3], S.hourly.cum[S.tl]); return S.mrms ? sample(S.mrms.grid, p[2], p[3]) : null; }
 function gaugePopup(g) {
-  return () => `<b>${esc(g.name)}</b><br><b class="big">${fin(g.total)}"</b> gauge total<br>` + (g.mrms != null ? `MRMS at this spot: <b>${g.mrms.toFixed(2)}"</b><br>` : '') + (g.daily ? g.reports.filter(r => r.t - 12 * H >= S.a && r.t - 12 * H <= S.b).map(r => `${fmt(r.t)}: ${r.v.toFixed(2)}"<br>`).join('') : `Last hour: ${fin(g.last1)}"<br>`) + `<span class="muted">${esc(g.src)} · last report ${g.lastT ? fmt(g.lastT) : '—'}</span>` + g.flags.map(f => `<br><span style="color:var(--warn)">⚠ ${esc(f.t)}</span>`).join('');
+  return () => `<b>${esc(g.name)}</b><br><b class="big">${fin(g.total)}"</b> gauge total<br>` + (g.mrms != null ? `MRMS at this spot: <b>${g.mrms.toFixed(2)}"</b><br>` : '') + (g.daily ? g.reports.filter(r => r.t - 12 * H >= S.a && r.t - 12 * H <= S.b).map(r => `${fmt(r.t)}: ${r.v.toFixed(2)}"<br>`).join('') : `Last hour: ${fin(g.last1)}"<br>`) + (g.net === 'KSC' ? `Last rain recorded: <b>${g.lastRain ? lastRainText(g.lastRain) : 'none in the stored record'}</b><br>` : '') + `<span class="muted">${esc(g.src)}${g.net === 'KSC' ? '' : ` · last report ${g.lastT ? fmt(g.lastT) : '—'}`}</span>` + g.flags.map(f => `<br><span style="color:var(--warn)">⚠ ${esc(f.t)}</span>`).join('');
 }
 /* Click anywhere on a map: everything known about that spot. */
 function inRing(lat, lon, ring) { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const a = ring[i], b = ring[j]; if ((a[1] > lat) !== (b[1] > lat) && lon < (b[0] - a[0]) * (lat - a[1]) / (b[1] - a[1]) + a[0]) c = !c; } return c; }
 function alertsAt(lat, lon) { return S.alerts.filter(f => { const g = f.geometry; if (!g) return false; const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : []; return polys.some(p => p[0] && inRing(lat, lon, p[0])); }); }
 function queryHtml(lat, lon) {
-  const end = shownEnd(), mr = S.hourly && S.tl >= 0 ? sample(S.hourly.geo, lat, lon, S.hourly.cum[S.tl]) : S.mrms ? sample(S.mrms.grid, lat, lon) : null;
+  const end = shownEnd(), mr = S.hourly && S.tl >= 0 && S.tl < S.hourly.n - 1 ? sample(S.hourly.geo, lat, lon, S.hourly.cum[S.tl]) : S.mrms ? sample(S.mrms.grid, lat, lon) : null;
   const an = S.idw ? sample(S.idw, lat, lon) : null, pk = S.hourly ? sample(S.hourly.geo, lat, lon, S.hourly.peak) : null;
   const near = fullGauges().map(g => ({ g, d: km(lat, lon, g.lat, g.lon) })).sort((x, y) => x.d - y.d).slice(0, 4);
   const row = (l, v) => `<tr><td style="border:0;padding:1px 10px 1px 0" class="muted">${l}</td><td style="border:0;padding:1px 0;text-align:right">${v}</td></tr>`;
@@ -542,7 +572,7 @@ function renderSites() {
 function renderGauges() {
   const gs = [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null).sort((x, y) => y.total - x.total), max = Math.max(0.01, ...gs.map(g => g.total));
   let h = `<table><thead><tr><th>Gauge</th><th class="n">Total</th><th class="n" title="Accumulation in the final hour of the period">Last 1 h</th><th class="n" title="MRMS estimate at the gauge">MRMS</th></tr></thead><tbody>`;
-  for (const g of gs) h += `<tr class="row${S.sel.includes(g.id) ? ' sel' : ''}" data-id="${esc(g.id)}" data-ll="${g.lat},${g.lon}"><td><b>${esc(g.id)}</b> <span class="muted">${esc(g.name.replace(/^K\w+ · /, '').replace('KSC rain gauge ', 'KSC gauge ').replace(/^(USGS|CoCoRaHS|COOP) /, ''))}</span>${g.flags.map(f => `<span class="flag${f.k === 'daily' ? '' : ' w'}" title="${esc(f.t)}">${f.k === 'suspect' ? 'check gauge' : f.k === 'partial' ? 'partial period' : f.k === 'daily' ? 'daily' : 'stale'}</span>`).join('')}<div class="bar" style="width:${Math.round(g.total / max * 100)}%;background:${colorFor(g.total) || 'var(--line)'}"></div></td><td class="n">${swatch(g.total)}</td><td class="n">${fin(g.last1)}</td><td class="n">${fin(g.mrms)}</td></tr>`;
+  for (const g of gs) h += `<tr class="row${S.sel.includes(g.id) ? ' sel' : ''}" data-id="${esc(g.id)}" data-ll="${g.lat},${g.lon}"><td><b>${esc(g.id)}</b> <span class="muted">${esc(g.name.replace(/^K\w+ · /, '').replace('KSC rain gauge ', 'KSC gauge ').replace(/^(USGS|CoCoRaHS|COOP) /, ''))}</span>${g.flags.map(f => `<span class="flag${f.k === 'daily' ? '' : ' w'}" title="${esc(f.t)}">${f.k === 'suspect' ? 'check gauge' : f.k === 'partial' ? 'partial period' : f.k === 'daily' ? 'daily' : f.k === 'outage' ? `no data since ${fmt(S.kscOut.t, S.tz, false)}` : 'stale'}</span>`).join('')}<div class="bar" style="width:${Math.round(g.total / max * 100)}%;background:${colorFor(g.total) || 'var(--line)'}"></div></td><td class="n">${swatch(g.total)}</td><td class="n">${isOut(g) ? '—' : fin(g.last1)}</td><td class="n">${fin(g.mrms)}</td></tr>`;
   if (!gs.length) h += '<tr><td colspan="4" class="muted">No gauge data loaded yet.</td></tr>';
   $('tab-gauges').innerHTML = h + '</tbody></table>';
 }
@@ -561,7 +591,7 @@ function renderSources() {
   el.innerHTML = h; $('product').value = S.product;
 }
 function stats() {
-  const full = fullGauges(), top = full.slice().sort((x, y) => y.total - x.total)[0], cape = S.mrms ? boxStats(S.mrms.grid, CFG.cape) : null, pr = poiRows().filter(r => r.mrms != null);
+  const full = fullGauges(), top = topPool().sort((x, y) => y.total - x.total)[0], cape = S.mrms ? boxStats(S.mrms.grid, CFG.cape) : null, pr = poiRows().filter(r => r.mrms != null);
   const pairs = full.filter(g => g.mrms != null && g.cmp != null && g.cmp >= 0.25), sg = pairs.reduce((s, g) => s + g.cmp, 0), sm = pairs.reduce((s, g) => s + g.mrms, 0);
   const rate = goodGauges().filter(g => g.last1 != null && !g.flags.some(f => f.k === 'stale')).sort((x, y) => y.last1 - x.last1)[0];
   const sus = [...S.gauges.values()].filter(g => S.nets[g.net] && g.suspect);
@@ -571,13 +601,15 @@ const nearPoi = (lat, lon) => { let b = null, bd = 1e9; for (const p of S.poi) {
 function renderKpis() {
   const s = stats(), k = (l, v, u, d) => `<div class="kpi"><div class="lbl">${l}</div><div class="v">${v}${u ? `<small>${u}</small>` : ''}</div><div class="d" title="${esc(d)}">${esc(d)}</div></div>`;
   $('kpis').innerHTML =
-    k('Highest gauge total', s.top ? s.top.total.toFixed(2) : '—', s.top ? 'in' : '', s.top ? `${s.top.id} · ${s.top.name.replace(/^K\w+ · /, '')}` : 'Waiting for gauges') +
+    k('Highest gauge total', s.top ? s.top.total.toFixed(2) + (isOut(s.top) ? '+' : '') : '—', s.top ? 'in' : '', s.top ? `${s.top.id} · ${isOut(s.top) ? `counted only to ${fmt(S.kscOut.t, S.tz, false)} — gauge network down` : s.top.name.replace(/^K\w+ · /, '')}` : 'Waiting for gauges') +
     k('Highest radar estimate, Cape/KSC', s.cape ? s.cape.max.toFixed(2) : '—', s.cape ? 'in' : '', s.cape ? `${nearPoi(s.cape.lat, s.cape.lon)} · area average ${s.cape.mean.toFixed(2)}"` : 'Waiting for MRMS') +
     k('Key sites (radar estimate)', s.pr.length ? `${s.prMin.mrms.toFixed(1)}–${s.prMax.mrms.toFixed(1)}` : '—', s.pr.length ? 'in' : '', s.pr.length ? `Most: ${s.prMax.name} · least: ${s.prMin.name}` : 'Waiting for MRMS') +
     k('Heaviest in final hour', s.rate ? s.rate.last1.toFixed(2) : '—', s.rate ? 'in/h' : '', s.rate ? `${s.rate.id} · hour ending ${fmt(S.b, S.tz, false)}` : 'Waiting for gauges') +
     k('Radar vs. gauges', s.ratio ? `${s.ratio >= 1 ? '+' : '−'}${Math.abs((s.ratio - 1) * 100).toFixed(0)}` : '—', s.ratio ? '%' : '', s.ratio ? `MRMS reads ${s.ratio >= 1 ? 'higher' : 'lower'} than ${s.pairs.length} gauges overall` : 'Needs MRMS and 3+ gauges') +
     k('Active flood alerts', String(s.floods.length), '', s.floods.length ? [...new Set(s.floods.map(f => f.properties.event))].join(' · ') : (S.src.alerts && S.src.alerts.state === 'ok' ? 'None for Brevard and neighbors' : 'Waiting for NWS'));
   const notes = [];
+  if (S.kscOut && S.b > S.kscOut.t + 90 * 60000) notes.push(`KSC/CCSFS RAIN GAUGES APPEAR TO BE DOWN: no gauge in the network has recorded rain since ${lastRainText(S.kscOut)} (${agoText(S.kscOut.t)}), while nearby airfield gauges have recorded up to ${S.kscOut.ev[0].v.toFixed(2)}" since then (${S.kscOut.ev.slice(0, 3).map(e => `${e.g.id} ${e.v.toFixed(2)}"`).join(', ')}). KSC/CCSFS gauge totals count rain only up to that time, are marked "no data since", and are left out of the gauge analysis and radar comparison. Use the radar estimate for totals after that time.`);
+  if (S.mrms && S.product === 'auto' && S.mrms.products[0] !== 'pass2') notes.push(`MRMS product in use: ${PNAME[S.mrms.products[0]]}. The gauge-corrected Pass 2 files for the latest hours are not published yet (about 2 hours behind), so radar totals for this same period will change as better passes arrive. Pick one product in the \"MRMS product\" menu to keep them fixed.`);
   if (S.mrms && Math.abs(S.mrms.a - S.a) + Math.abs(S.mrms.b - S.b) > 20 * 60000) notes.push(`MRMS covers whole hours ${fmt(S.mrms.a)} → ${fmt(S.mrms.b)}; gauge totals cover the exact period. Radar-vs-gauge comparisons use the MRMS hours.`);
   if (s.sus.length) notes.push(`${s.sus.length} gauge${s.sus.length > 1 ? 's' : ''} read zero while radar or neighbors show rain (${s.sus.slice(0, 8).map(g => g.id).join(', ')}${s.sus.length > 8 ? '…' : ''}) — ${S.excludeSuspect ? 'left out of maxima and analysis' : 'included'}`);
   if (S.kscAge != null && S.kscAge > 40 && S.b > Date.now() - 2 * H) notes.push(`KSC gauge data is ${S.kscAge >= 120 ? (S.kscAge / 60).toFixed(1) + ' hours' : Math.round(S.kscAge) + ' minutes'} old — the collector has stopped updating. KSC totals do not include the most recent rain.`);
@@ -586,7 +618,7 @@ function renderKpis() {
   if (S.fellBack && IEMT[$('rasterA').value]) notes.push('MRMS numbers could not be loaded, so the map is showing the IEM reference picture (fixed look-back ending now, IEM colors). Key-site MRMS values are unavailable.');
   if (S.noBase) notes.push('Background map tiles are blocked on this network (CARTO, OpenStreetMap and Esri were all tried). Rainfall shading, gauges and key sites still plot correctly; only the street/imagery backdrop is missing.');
   const bad = Object.keys(SRC).filter(x => S.src[x] && S.src[x].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(x => SRC[x].split(' (')[0]).join('; ')} — see Sources tab`);
-  $('banner').hidden = !notes.length; $('banner').innerHTML = notes.map(esc).join('<br>');
+  $('banner').hidden = !notes.length; $('banner').innerHTML = notes.map(n => /^KSC\/CCSFS RAIN GAUGES APPEAR/.test(n) ? `<b style="color:var(--crit)">${esc(n.slice(0, 40))}</b>${esc(n.slice(40))}` : esc(n)).join('<br>');
 }
 
 /* ───────────────────────── charts ───────────────────────── */
@@ -625,7 +657,7 @@ function renderChart() {
 }
 const NETCOL = { ASOS: '--s1', KSC: '--s2', USGS: '--s3', DAILY: '--s4' }, NETNAME = { ASOS: 'Airfield ASOS/AWOS', KSC: 'KSC/CCSFS gauges', USGS: 'USGS gauges', DAILY: 'Daily gauges' };
 function renderScatter() {
-  const el = $('scatter'), W = Math.max(300, el.clientWidth - 16), Hh = 280, m = { l: 54, r: 12, t: 10, b: 30 }, gs = [...S.gauges.values()].filter(g => S.nets[g.net] && g.cmp != null && g.mrms != null && !g.flags.some(f => f.k === 'partial'));
+  const el = $('scatter'), W = Math.max(300, el.clientWidth - 16), Hh = 280, m = { l: 54, r: 12, t: 10, b: 30 }, gs = [...S.gauges.values()].filter(g => S.nets[g.net] && g.cmp != null && g.mrms != null && !g.flags.some(f => f.k === 'partial' || f.k === 'outage'));
   if (!gs.length) { el.innerHTML = '<div class="box muted">Needs MRMS and gauge totals for the same period.</div>'; $('scatterNote').textContent = ''; return; }
   const mx = niceMax(Math.max(0.5, ...gs.map(g => Math.max(g.cmp, g.mrms)))), x = v => m.l + v / mx * (W - m.l - m.r), y = v => Hh - m.b - v / mx * (Hh - m.t - m.b);
   let h = svgEl(W, Hh); for (let i = 0; i <= 4; i++) { const v = mx * i / 4; h += `<line class="gl" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/><line class="gl" x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${Hh - m.b}"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(2)}</text><text x="${x(v)}" y="${Hh - 14}" text-anchor="middle">${+v.toFixed(2)}</text>`; }
@@ -642,22 +674,23 @@ function hideTip() { $('tip').hidden = true; }
 /* ───────────────────────── summary / export ───────────────────────── */
 function briefText() {
   const s = stats(), L2 = [`SPACE COAST RAINFALL — ${fmt(S.a, 'UTC')} to ${fmt(S.b, 'UTC')} (${fmt(S.a, 'ET')} to ${fmt(S.b, 'ET')})`];
-  if (s.top) L2.push(`Highest gauge: ${s.top.total.toFixed(2)}" at ${s.top.id} (${s.top.name.replace(/^K\w+ · /, '')}).`);
+  if (s.top) L2.push(`Highest gauge: ${s.top.total.toFixed(2)}${isOut(s.top) ? '+' : ''}" at ${s.top.id} (${s.top.name.replace(/^K\w+ · /, '')}).`);
   if (s.cape) L2.push(`Highest MRMS radar estimate over the Cape/KSC: ${s.cape.max.toFixed(2)}" (${nearPoi(s.cape.lat, s.cape.lon)}); area average ${s.cape.mean.toFixed(2)}".`);
   const key = [...S.gauges.values()].filter(g => g.key && g.total != null); if (key.length) L2.push('Airfield gauges: ' + key.map(g => `${g.id} ${g.total.toFixed(2)}"${g.suspect ? ' (check gauge)' : ''}`).join(', ') + '.');
   const pr = poiRows(); if (pr.some(r => r.mrms != null)) for (const [k, name] of AREAS) { const rs = pr.filter(r => siteArea(r) === k && r.mrms != null); if (rs.length) L2.push(`${name} (MRMS): ` + rs.map(r => `${r.name} ${r.mrms.toFixed(2)}"`).join(', ') + '.'); }
   if (s.rate) L2.push(`Heaviest gauge rate in the final hour: ${s.rate.last1.toFixed(2)}" at ${s.rate.id}.`);
   if (s.ratio) L2.push(`MRMS is running ${Math.abs((s.ratio - 1) * 100).toFixed(0)}% ${s.ratio >= 1 ? 'above' : 'below'} ${s.pairs.length} gauges overall.`);
   L2.push(s.floods.length ? 'Active flood alerts: ' + s.floods.map(f => `${f.properties.event} (${(f.properties.areaDesc || '').split(';')[0]}) until ${fmt(Date.parse(f.properties.ends || f.properties.expires), 'ET')}`).join('; ') + '.' : 'No active flood alerts for Brevard and neighboring counties.');
+  if (S.kscOut && S.b > S.kscOut.t + 90 * 60000) L2.push(`KSC/CCSFS rain gauges appear down: no rain recorded by any gauge since ${fmt(S.kscOut.t, 'UTC')} (${fmt(S.kscOut.t, 'ET')}), while nearby airfield gauges recorded up to ${S.kscOut.ev[0].v.toFixed(2)}" since. KSC/CCSFS gauge totals are valid only up to that time.`);
   if (s.sus.length) L2.push(`Gauges likely not reporting (excluded): ${s.sus.map(g => g.id).join(', ')}.`);
   if (S.mrms) L2.push(`MRMS: ${S.mrms.products.map(p => PNAME[p]).join(' + ')}, ${fmt(S.mrms.a, 'UTC')}–${fmt(S.mrms.b, 'UTC')}. Gauge data are not quality controlled.`);
   return L2.join('\n');
 }
 function csvText() {
-  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'installation', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_in', 'gauge_analysis_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc']];
+  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'installation', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_in', 'gauge_analysis_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc', 'last_rain_recorded_utc']];
   const A = new Date(S.a).toISOString(), B = new Date(S.b).toISOString();
   for (const r of poiRows()) rows.push(['key site', AREAS.find(x => x[0] === siteArea(r))[1], r.name, POI_KIND[r.kind], r.lat, r.lon, '', '', r.mrms == null ? '' : r.mrms.toFixed(2), r.an == null ? '' : r.an.toFixed(2), r.pk == null ? '' : r.pk.toFixed(2), '', 'MRMS', A, B]);
-  for (const g of [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total)) rows.push(['gauge', AREAS.find(x => x[0] === gaugeArea(g))[1], g.id, g.name, g.lat, g.lon, g.total.toFixed(2), g.last1 == null ? '' : g.last1.toFixed(2), g.mrms == null ? '' : g.mrms.toFixed(2), '', '', g.flags.map(f => f.k).join(' '), g.src, A, B]);
+  for (const g of [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total)) rows.push(['gauge', AREAS.find(x => x[0] === gaugeArea(g))[1], g.id, g.name, g.lat, g.lon, g.total.toFixed(2), g.last1 == null ? '' : g.last1.toFixed(2), g.mrms == null ? '' : g.mrms.toFixed(2), '', '', g.flags.map(f => f.k).join(' '), g.src, A, B, g.lastRain ? new Date(g.lastRain.t).toISOString() : '']);
   return rows.map(r => r.map(q).join(',')).join('\r\n');
 }
 
@@ -718,6 +751,7 @@ function init() {
     else { const only = !allOn(g) && Object.keys(g).every(x => g[x] === (x === k)); for (const x in g) g[x] = only ? true : x === k; }
     store.set('nets', S.nets); store.set('kinds', S.kinds); syncChips(); buildAnalysis(); renderAll(); };
   syncChips();
+  $('productTop').value = S.product; $('productTop').onchange = () => { S.product = $('productTop').value; store.set('product', S.product); const p2 = $('product'); if (p2) p2.value = S.product; loadAll(); };
   $('btnHourly').onclick = loadHourly; $('tlSlider').oninput = () => { S.tl = +$('tlSlider').value; S.ver++; renderMaps(); $('tlInfo').textContent = `Accumulation ${fmt(S.hourly.a)} → ${fmt(S.hourly.a + (S.tl + 1) * H)}`; };
   let play = null; $('tlPlay').onclick = () => { if (play) { clearInterval(play); play = null; $('tlPlay').textContent = 'Play'; return; } $('tlPlay').textContent = 'Pause'; if (S.tl >= S.hourly.n - 1) S.tl = -1; play = setInterval(() => { if (!S.hourly || S.tl >= S.hourly.n - 1) { clearInterval(play); play = null; $('tlPlay').textContent = 'Play'; return; } S.tl++; $('tlSlider').value = S.tl; $('tlSlider').oninput(); }, 450); };
   document.querySelector('.tabs').onclick = e => { const bn = e.target.closest('button'); if (!bn) return; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === bn)); document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + bn.dataset.tab)); };
@@ -729,7 +763,7 @@ function init() {
     if (id === 'poiSave') { const out = []; for (const ln of $('poiEdit').value.split('\n')) { if (!ln.trim()) continue; const c = ln.split(',').map(x => x.trim()), la = +c[c.length - 2], lo = +c[c.length - 1], kind = c[c.length - 3]; if (c.length < 4 || !POI_KIND[kind] || !isFinite(la) || !isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) { $('poiMsg').textContent = 'Could not read: ' + ln; return; } out.push([c.slice(0, c.length - 3).join(', '), kind, la, lo]); } S.poi = out; store.set('poi', out); renderAll(); renderSources(); }
     if (id === 'poiReset') { S.poi = POI_DEFAULT; store.set('poi', null); renderAll(); renderSources(); }
   });
-  document.querySelector('.side').addEventListener('change', e => { if (e.target.id === 'product') { S.product = e.target.value; store.set('product', S.product); loadAll(); } if (e.target.id === 'exSus') { S.excludeSuspect = e.target.checked; buildAnalysis(); renderAll(); } });
+  document.querySelector('.side').addEventListener('change', e => { if (e.target.id === 'product') { S.product = e.target.value; store.set('product', S.product); $('productTop').value = S.product; loadAll(); } if (e.target.id === 'exSus') { S.excludeSuspect = e.target.checked; buildAnalysis(); renderAll(); } });
   $('chartLegend').onclick = e => { const sp = e.target.closest('[data-id]'); if (sp) toggleSel(sp.dataset.id); };
   window.addEventListener('resize', () => { renderChart(); renderScatter(); });
   loadAll();

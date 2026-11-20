@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Space Coast Rainfall — Flood Situational Awareness</title>
-<link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=202611191325">
-<link rel="stylesheet" href="app.css?v=202611191325">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css?v=202611201157">
+<link rel="stylesheet" href="app.css?v=202611201157">
 </head>
 <body>
 <header class="top">
@@ -53,6 +53,9 @@
     <div class="mapbar">
       <div class="grp"><span class="lbl">Map shows</span>
         <select id="rasterA"></select>
+      </div>
+      <div class="grp"><span class="lbl">MRMS product</span>
+        <select id="productTop" title="Auto uses the best product available for the newest hour, so totals for recent periods change as better passes are published. Choose one product to keep totals fixed."><option value="auto">Auto (best available)</option><option value="pass2">Pass 2 · gauge-corrected · ~2 h behind</option><option value="pass1">Pass 1 · ~1 h behind</option><option value="radar">Radar-only · fastest</option></select>
       </div>
       <div class="grp" id="grpB" hidden><span class="lbl">Right map</span>
         <select id="rasterB"></select>
@@ -117,12 +120,12 @@
 <footer class="foot" id="foot"></footer>
 <div id="tip" class="tip" hidden></div>
 
-<script src="vendor/leaflet/leaflet.js?v=202611191325"></script>
-<script src="vendor/jspdf/jspdf.umd.min.js?v=202611191325"></script>
-<script src="vendor/jspdf/jspdf.plugin.autotable.min.js?v=202611191325"></script>
-<script src="mrms.js?v=202611191325"></script>
-<script src="app.js?v=202611191325"></script>
-<script src="report.js?v=202611191325"></script>
-<!-- build 202611191325 -->
+<script src="vendor/leaflet/leaflet.js?v=202611201157"></script>
+<script src="vendor/jspdf/jspdf.umd.min.js?v=202611201157"></script>
+<script src="vendor/jspdf/jspdf.plugin.autotable.min.js?v=202611201157"></script>
+<script src="mrms.js?v=202611201157"></script>
+<script src="app.js?v=202611201157"></script>
+<script src="report.js?v=202611201157"></script>
+<!-- build 202611201157 -->
 </body>
 </html>

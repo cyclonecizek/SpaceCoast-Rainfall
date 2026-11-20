@@ -51,13 +51,20 @@ straight away. The map extent is set at the top of `report.js`.
 ## How totals are computed
 
 - **MRMS**: the period is rounded to whole hours ending at the last available hour, then tiled with the fewest
-  accumulation files (72/48/24/12/6/3/1 h). Product is chosen in the Sources tab; *Auto* tries Multi-sensor
-  Pass 2, then Pass 1, then Radar-only for each file and tells you which it used.
+  accumulation files (72/48/24/12/6/3/1 h). One product is used for the whole total, never a mix. *Auto* takes
+  the newest hour first and then the best product that has every file for that window (Pass 2, then Pass 1,
+  then Radar-only), so totals for a recent period change as better passes are published; the banner says when
+  that applies. Choose a single product in the **MRMS product** menu to keep totals fixed.
 - **METAR gauges**: hourly precipitation (`p01i`) is a running total that resets after each routine observation;
   finished hours contribute their peak, the hour in progress contributes its running value.
 - **Daily gauges (CoCoRaHS, COOP)**: each report is a 24-hour total read around 7 AM. A report is counted when the
   middle of its 24 hours falls inside the selected period, so totals never match the period exactly. They are
   drawn as squares and left out of maxima, the gauge analysis and the radar comparison.
+- **KSC/CCSFS network outage**: the archive shows a dead gauge as 0.00, so the page tracks when each gauge last
+  recorded rain (to the second, from the archive export). If no gauge has recorded rain for two hours or more
+  while airfield gauges within 45 km have recorded 0.10" or more since, the network is treated as down from
+  that time: a red banner and report callout give the time, the gauges are tagged "no data since", their totals
+  are shown as lower bounds ("+") and they are left out of the gauge analysis and radar comparison.
 - **"Check gauge"**: a gauge reading 0.00" while MRMS over it or neighboring gauges show 0.75" or more.
   These are left out of maxima, the gauge analysis and the radar-vs-gauge bias (toggle in Sources).
 - **Gauge analysis**: inverse-distance weighting, shown only within 10 km of a gauge.

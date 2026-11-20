@@ -81,11 +81,17 @@ async function generateReport() {
 
   const rx = mx + mw + 18, rw = PW - M - rx; let y = 58;
   const base = { theme: 'plain', styles: { font: 'helvetica', fontSize: 8, cellPadding: { top: 2.1, bottom: 2.1, left: 4, right: 4 }, textColor: ink, lineColor: [215, 222, 229], lineWidth: { bottom: 0.5 } }, headStyles: { fontSize: 7, textColor: mut, fontStyle: 'bold' } };
-  const gAll = [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null).map(g => Object.assign(g, { area: gaugeArea(g) })), gFull = fullGauges();
+  const gAll = [...S.gauges.values()].filter(g => S.nets[g.net] && g.total != null).map(g => Object.assign(g, { area: gaugeArea(g) })), gFull = topPool();
+  const out = S.kscOut && S.b > S.kscOut.t + 90 * 60000 ? S.kscOut : null, outTxt = out ? `${out.exact ? '' : 'about '}${fmt(out.t, 'UTC')} (${fmt(out.t, 'ET')})` : '';
+  if (out) {   // outage callout
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    const msg = doc.splitTextToSize(`KSC/CCSFS RAIN GAUGES DOWN — no gauge in the network has recorded rain since ${outTxt}, while nearby airfield gauges recorded up to ${out.ev[0].v.toFixed(2)}" after that (${out.ev.slice(0, 3).map(e => `${e.g.id} ${e.v.toFixed(2)}"`).join(', ')}). KSC/CCSFS gauge totals below count rain only up to that time (shown with "+"). Use the radar estimate for rain after it.`, rw - 16);
+    doc.setFillColor(253, 236, 236); doc.setDrawColor(200, 48, 44); doc.setLineWidth(1); doc.rect(rx, y, rw, msg.length * 9.6 + 10, 'FD'); doc.setTextColor(140, 20, 18); doc.text(msg, rx + 8, y + 12); y += msg.length * 9.6 + 18; doc.setDrawColor(0);
+  }
   // by installation
   const inst = AREAS.slice(0, 3).map(([k, name]) => {
-    const gs = gFull.filter(g => g.area === k).sort((a, b) => b.total - a.total), ps = sites.filter(p => p.area === k && p.mrms != null).map(p => p.mrms), l1 = gs.filter(g => g.last1 != null).sort((a, b) => b.last1 - a.last1)[0];
-    return [name, gs.length ? gs[0].total.toFixed(2) : '—', gs.length ? gs[0].id : '', ps.length ? (Math.min(...ps).toFixed(1) === Math.max(...ps).toFixed(1) ? Math.max(...ps).toFixed(2) : `${Math.min(...ps).toFixed(1)}–${Math.max(...ps).toFixed(1)}`) : '—', l1 ? l1.last1.toFixed(2) : '—'];
+    const gs = gFull.filter(g => g.area === k).sort((a, b) => b.total - a.total), ps = sites.filter(p => p.area === k && p.mrms != null).map(p => p.mrms), l1 = gs.filter(g => g.last1 != null && !isOut(g)).sort((a, b) => b.last1 - a.last1)[0];
+    return [name, gs.length ? gs[0].total.toFixed(2) + (isOut(gs[0]) ? '+' : '') : '—', gs.length ? gs[0].id : '', ps.length ? (Math.min(...ps).toFixed(1) === Math.max(...ps).toFixed(1) ? Math.max(...ps).toFixed(2) : `${Math.min(...ps).toFixed(1)}–${Math.max(...ps).toFixed(1)}`) : '—', l1 ? l1.last1.toFixed(2) : '—'];
   });
   doc.autoTable({ ...base, startY: y, margin: { left: rx, right: M }, tableWidth: rw, head: [['Installation', 'Highest gauge (in)', 'at', 'Radar est. at key sites (in)', 'Last hour, max (in)']], body: inst,
     styles: { ...base.styles, fontSize: 9, cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 } }, columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'center', cellWidth: 62 }, 2: { cellWidth: 40, textColor: mut }, 3: { halign: 'center' }, 4: { halign: 'center', cellWidth: 62 } }, didParseCell: d => shade(d, [1]) });
@@ -108,13 +114,13 @@ async function generateReport() {
 
   /* ── page 2: gauges by installation ── */
   doc.addPage(); header('Rainfall Summary — Gauges by Installation');
-  const tag = g => g.suspect ? 'Check gauge — likely not reporting' : g.flags.some(f => f.k === 'partial') ? 'Partial period' : g.daily ? 'Daily 7 AM reading' : g.flags.some(f => f.k === 'stale') ? 'Stale' : '';
+  const tag = g => isOut(g) ? (!g.lastRain ? 'No rain recorded in the stored record' : S.kscOut.t - g.lastRain.t > 6 * H ? `Last rain recorded ${fmt(g.lastRain.t, 'UTC')}` : `No data after ${fmt(S.kscOut.t, 'UTC')}`) : g.suspect ? 'Check gauge — likely not reporting' : g.flags.some(f => f.k === 'partial') ? 'Partial period' : g.daily ? 'Daily 7 AM reading' : g.flags.some(f => f.k === 'stale') ? 'Stale' : '';
   const colW = (PW - 2 * M - 20) / 2, x2 = M + colW + 20, label = g => g.net === 'ASOS' ? g.name.replace(' · ', '  ') : g.net === 'KSC' ? `${g.id}  KSC archive gauge ${+g.id.slice(2)}` : `${g.id}  ${g.name.replace(/^(USGS|CoCoRaHS|COOP) /, '').slice(0, 26)}`;
   const gTable = (title, list, x, y0, max) => {
     list = list.slice().sort((a, b) => (!!b.key - !!a.key) || (b.total - a.total)); const show = list.slice(0, max);
     doc.setTextColor(...ink); doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.text(title + (list.length > show.length ? `  (top ${show.length} of ${list.length})` : ''), x, y0);
     doc.autoTable({ ...base, styles: { ...base.styles, fontSize: 7.6, cellPadding: { top: 1.7, bottom: 1.7, left: 4, right: 4 } }, startY: y0 + 6, margin: { left: x, bottom: 30 }, tableWidth: colW, pageBreak: 'avoid', head: [['Gauge', 'Total (in)', 'Last 1 h', 'Radar est.', 'Note']],
-      body: show.length ? show.map(g => [label(g), g.total.toFixed(2), fin(g.last1), fin(g.mrms), tag(g)]) : [['No gauge data for this period', '', '', '', '']],
+      body: show.length ? show.map(g => [label(g), g.total.toFixed(2) + (isOut(g) && g.total > 0 ? '+' : ''), isOut(g) ? '—' : fin(g.last1), fin(g.mrms), tag(g)]) : [['No gauge data for this period', '', '', '', '']],
       columnStyles: { 1: { halign: 'center', cellWidth: 46 }, 2: { halign: 'center', cellWidth: 40 }, 3: { halign: 'center', cellWidth: 46 }, 4: { fontSize: 6.5, textColor: mut } }, didParseCell: d => shade(d, [1]) });
     return doc.lastAutoTable.finalY;
   };
@@ -132,7 +138,9 @@ async function generateReport() {
   yL += 14; const notes = [];
   if (S.mrms) notes.push(`Radar estimate: MRMS ${S.mrms.products.map(p => PNAME[p]).join(' + ')}, whole hours ${fmt(S.mrms.a, 'UTC')} to ${fmt(S.mrms.b, 'UTC')}.`); else notes.push('Radar estimate (MRMS) was not available; key-site values are blank.');
   if (s.sus.length) notes.push(`${s.sus.length} gauge${s.sus.length > 1 ? 's' : ''} read zero while radar or neighbors show rain and ${S.excludeSuspect ? 'are excluded from maxima' : 'are included'}: ${s.sus.map(g => g.id).join(', ')}.`);
-  if (S.src.ksc && S.src.ksc.state !== 'ok') notes.push('KSC/CCSFS gauge data may be incomplete or out of date for this period.');
+  if (out) notes.push(`KSC/CCSFS gauge network: last rain recorded by any gauge at ${outTxt}. Nearby airfield gauges recorded up to ${out.ev[0].v.toFixed(2)}" after that, so the network is treated as down from then; its totals are lower bounds and are left out of the gauge analysis and radar comparison.`);
+  else if (S.kscLast) notes.push(`KSC/CCSFS gauge network: last rain recorded by any gauge at ${S.kscLast.exact ? '' : 'about '}${fmt(S.kscLast.t, 'UTC')}.`);
+  if (S.src.ksc && S.src.ksc.state === 'err') notes.push('KSC/CCSFS gauge data could not be loaded.');
   const bad = Object.keys(SRC).filter(k => S.src[k] && S.src[k].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(k => SRC[k].split(' (')[0]).join('; ')}.`);
   notes.push('Installation grouping: key sites are assigned by name; archive gauges are assigned by position (east of the Banana River = Cape Canaveral SFS) and may be approximate near the boundary. Public gauges (USGS, CoCoRaHS, COOP) are listed under the surrounding area.');
   notes.push('Highest gauge and last-hour values by installation use gauges with complete data for the period; gauges that look offline and once-a-day gauges are left out.');

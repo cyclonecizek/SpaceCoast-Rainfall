@@ -120,6 +120,46 @@ def parse_export(text):
     return out, n, head
 
 
+def last_tips(text):
+    """Export CSV -> {gauge: datetime of its last record with rain}."""
+    import csv, io
+    out = {}
+    for r in csv.reader(io.StringIO(text.lstrip("\ufeff"))):
+        try:
+            if len(r) < 4 or float(r[3]) <= 0: continue
+            t = dt.datetime.strptime(r[0].strip() + " " + r[1].strip().split(".")[0], "%m/%d/%Y %H:%M:%S"); g = str(int(r[2]))
+            if g not in out or t > out[g]: out[g] = t
+        except ValueError:
+            continue
+    return out
+
+
+def refine_last_rain(store, last, notes):
+    """Per gauge: when it last recorded rain. Hour-level from the hourly record, sharpened to the second from the
+    archive export for that one hour. `last` maps gauge -> [ISO time, 1 if exact else 0] and is updated in place."""
+    try: example = open(EXAMPLE).read().strip() or DEFAULT_EXPORT
+    except OSError: example = DEFAULT_EXPORT
+    now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None); cur = now.strftime("%Y-%m-%dT%H:00Z")
+    hours = sorted(store, reverse=True); need = {}
+    for g in {g for h in store.values() for g in h}:
+        hk = next((k for k in hours if store[k].get(g, 0) > 0), None)
+        if hk is None: last.pop(g, None); continue
+        have = last.get(g)
+        if have and have[1] and have[0][:13] == hk[:13] and hk != cur: continue        # already looked up for a finished hour
+        if not have or have[0][:13] != hk[:13]:
+            last[g] = [(dt.datetime.strptime(hk, "%Y-%m-%dT%H:00Z") + dt.timedelta(minutes=59, seconds=59)).strftime("%Y-%m-%dT%H:%M:%SZ"), 0]
+        need.setdefault(hk, []).append(g)
+    for hk in sorted(need, reverse=True)[:3]:                                             # newest first, a few per round
+        a = dt.datetime.strptime(hk, "%Y-%m-%dT%H:00Z"); b = min(a + dt.timedelta(hours=1), now)
+        try:
+            tips = last_tips(fetch(export_url(example, a, b)))
+        except Exception as ex:
+            notes.append(f"last-rain lookup {hk} failed: {ex}"); continue
+        for g in need[hk]:
+            if g in tips: last[g] = [tips[g].strftime("%Y-%m-%dT%H:%M:%SZ"), 1]
+            elif hk != cur: last[g][1] = 2                                                # looked up, no record found: keep the hour-level time
+
+
 def backfill(store, done, notes):
     """Fill hours the Past-24-Hour page no longer shows, from the archive search export (per-tip records).
     Never overwrites hours already stored. Range: KSC_BACKFILL_START/END (YYYY-MM-DD, UTC) or the last KSC_BACKFILL_DAYS."""
@@ -165,10 +205,12 @@ def main():
     for k, v in hourly.items(): store.setdefault(k, {}).update(v)   # newer scrape wins; the current hour keeps growing
     done, notes = doc.get("backfilled", [])[-60:], []
     backfill(store, done, notes)
+    last = doc.get("last_rain", {})
+    refine_last_rain(store, last, notes)
     cut = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:00Z")
     store = {k: store[k] for k in sorted(store) if k >= cut}
     out = {"source": URL, "units": "inches per hour; key = hour start (UTC)", "updated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "page_as_of": ref.strftime("%Y-%m-%dT%H:%MZ"), "backfilled": done, "notes": notes, "hourly": store}
+           "page_as_of": ref.strftime("%Y-%m-%dT%H:%MZ"), "backfilled": done, "notes": notes, "last_rain": last, "hourly": store}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w") as f: json.dump(out, f, separators=(",", ":"))
     print(f"{n} gauges, page as of {ref:%Y-%m-%d %H:%MZ}; file now holds {len(store)} hours")
