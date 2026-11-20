@@ -447,7 +447,7 @@ const BASES = {
   osm: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap'],
 };
 const LABELS = 'https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png?key=' + CFG.cartoKey;
-const RASTERS = [['mrms', 'MRMS radar-estimated rainfall'], ['idw', 'Gauge analysis (interpolated gauges)'], ['diff', 'MRMS minus gauges (difference)'], ['peak', 'Peak 1-hour rainfall (MRMS, needs hourly timeline)'], ['iem24', 'Reference: IEM MRMS image, last 24 h'], ['iem48', 'Reference: IEM MRMS image, last 48 h'], ['iem72', 'Reference: IEM MRMS image, last 72 h'], ['none', 'No rainfall shading']];
+const RASTERS = [['mrms', 'MRMS radar-estimated rainfall'], ['idw', 'Estimate from gauges (interpolated, not measured)'], ['diff', 'MRMS minus gauges (difference)'], ['peak', 'Peak 1-hour rainfall (MRMS, needs hourly timeline)'], ['iem24', 'Reference: IEM MRMS image, last 24 h'], ['iem48', 'Reference: IEM MRMS image, last 48 h'], ['iem72', 'Reference: IEM MRMS image, last 72 h'], ['none', 'No rainfall shading']];
 const IEMT = { iem24: 'q2-p24h', iem48: 'q2-p48h', iem72: 'q2-p72h' };
 const M = {};
 function makeMap(key) {
@@ -474,7 +474,7 @@ function rasterFor(type) {
 function tagFor(type) {
   const end = shownEnd();
   if (type === 'mrms') return S.mrms ? [`MRMS radar-estimated rainfall`, `${fmt(S.mrms.a)} → ${fmt(end || S.mrms.b)} · ${S.mrms.products.map(p => PNAME[p]).join(' + ')}`] : ['MRMS radar-estimated rainfall', S.src.mrms && S.src.mrms.state === 'err' ? 'Not available — see Sources' : 'Loading…'];
-  if (type === 'idw') return ['Gauge analysis', S.idw ? `Interpolated from ${fullGauges().length} gauges${S.mrms ? ' over the MRMS hours' : ''}, shown only within 10 km of a gauge` : 'Needs at least 3 gauges with full-period data'];
+  if (type === 'idw') return ['Estimate interpolated from gauges', S.idw ? `Interpolated from ${fullGauges().length} gauges${S.mrms ? ' over the MRMS hours' : ''}, shown only within 10 km of a gauge` : 'Needs at least 3 gauges with full-period data'];
   if (type === 'diff') return ['MRMS minus gauge analysis', S.diff ? 'Brown: radar lower than gauges · Teal: radar higher' : 'Needs both MRMS and gauges'];
   if (type === 'peak') return ['Peak 1-hour rainfall (MRMS)', S.hourly ? `Highest single clock-hour total, ${fmt(S.hourly.a)} → ${fmt(S.hourly.a + S.hourly.n * H)}` : 'Load the hourly timeline first'];
   if (IEMT[type]) return [`IEM MRMS image · last ${type.slice(3)} h ending now`, 'Reference picture with IEM\'s own color scale — not tied to the selected period'];
@@ -530,7 +530,7 @@ function queryHtml(lat, lon) {
   const row = (l, v) => `<tr><td style="border:0;padding:1px 10px 1px 0" class="muted">${l}</td><td style="border:0;padding:1px 0;text-align:right">${v}</td></tr>`;
   let h = `<b>${lat.toFixed(4)}°N, ${Math.abs(lon).toFixed(4)}°W</b><br><span class="muted">${esc(nearPoi(lat, lon))}</span><table style="margin:6px 0;width:auto">`;
   h += row(`MRMS radar estimate${end ? ' (to ' + fmt(end, S.tz, false) + ')' : ''}`, mr != null ? `<b class="big">${mr.toFixed(2)}"</b>` : S.mrms ? 'outside coverage' : 'not loaded');
-  h += row('Gauge analysis here', an != null ? `<b>${an.toFixed(2)}"</b>` : '<span class="muted">no gauge within 10 km</span>');
+  h += row('Estimated from nearby gauges', an != null ? `<b>~${an.toFixed(2)}"</b>` : '<span class="muted">no gauge within 10 km</span>');
   if (mr != null && an != null && !end) h += row('Radar minus gauges', `<b>${mr - an >= 0 ? '+' : '−'}${Math.abs(mr - an).toFixed(2)}"</b>`);
   if (pk != null) h += row('Peak 1-hour (MRMS)', `<b>${pk.toFixed(2)}"</b>`);
   h += '</table>';
@@ -562,11 +562,12 @@ function renderMaps() {
 /* ───────────────────────── panels ───────────────────────── */
 function nearestGauge(lat, lon) { let best = null, bd = 1e9; for (const g of fullGauges()) { const d = km(lat, lon, g.lat, g.lon); if (d < bd) { bd = d; best = g; } } return best ? { g: best, d: bd } : null; }
 function poiRows() { return shownPoi().map(p => { const mr = S.mrms ? sample(S.mrms.grid, p[2], p[3]) : null, an = S.idw ? sample(S.idw, p[2], p[3]) : null, ng = nearestGauge(p[2], p[3]), pk = S.hourly ? sample(S.hourly.geo, p[2], p[3], S.hourly.peak) : null; return { name: p[0], kind: p[1], lat: p[2], lon: p[3], mrms: mr, an, ng, pk }; }); }
+const swatchEst = (v, ng) => v == null ? '<span class="muted" title="No gauge within 10 km">—</span>' : `<span class="sw est" style="border-color:${colorFor(v) || 'var(--line)'}" title="Estimated, not measured: distance-weighted from gauges within 10 km${ng ? ` (nearest is ${ng.g.id}, ${ng.d.toFixed(1)} km away)` : ''}">~${v.toFixed(2)}</span>`;
 const swatch = v => v == null ? '<span class="muted">—</span>' : `<span class="sw" style="background:${colorFor(v) || 'transparent'};color:${colorFor(v) ? inkFor(colorFor(v)) : 'inherit'}">${v.toFixed(2)}</span>`;
 function renderSites() {
-  const rows = poiRows(); let h = `<table><thead><tr><th>Site</th><th class="n" title="MRMS radar estimate at the site">MRMS</th><th class="n" title="Interpolated from surrounding gauges (within 10 km)">Gauges</th><th>Nearest gauge</th>${S.hourly ? '<th class="n" title="Highest single-hour MRMS total">Peak 1 h</th>' : ''}</tr></thead><tbody>`;
-  for (const [k, name] of AREAS) { const rs = rows.filter(r => siteArea(r) === k); if (!rs.length) continue; h += `<tr class="sec"><td colspan="${S.hourly ? 5 : 4}">${name}</td></tr>`; for (const r of rs) h += `<tr class="row${S.sel.includes('poi:' + r.name) ? ' sel' : ''}" data-id="poi:${esc(r.name)}" data-ll="${r.lat},${r.lon}"><td>${esc(r.name)}</td><td class="n">${swatch(r.mrms)}</td><td class="n">${swatch(r.an)}</td><td class="nw">${r.ng ? `${esc(r.ng.g.id)} <b>${r.ng.g.total.toFixed(2)}"</b> <span class="muted">${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'}</span>` : '<span class="muted">—</span>'}</td>${S.hourly ? `<td class="n">${fin(r.pk)}</td>` : ''}</tr>`; }
-  h += '</tbody></table><div class="box small muted">MRMS = radar estimate in the 1-km cell over the site. Gauges = distance-weighted from surrounding gauges; blank when no gauge is within 10 km. Inches.</div>';
+  const rows = poiRows(); let h = `<table><thead><tr><th>Site</th><th class="n" title="MRMS radar estimate for the 1-km cell over the site">Radar<br>estimate</th><th class="n" title="Not a measurement at the site. Distance-weighted estimate from rain gauges within 10 km.">Est. from<br>nearby gauges</th><th>Nearest gauge</th>${S.hourly ? '<th class="n" title="Highest single-hour MRMS total">Peak 1 h</th>' : ''}</tr></thead><tbody>`;
+  for (const [k, name] of AREAS) { const rs = rows.filter(r => siteArea(r) === k); if (!rs.length) continue; h += `<tr class="sec"><td colspan="${S.hourly ? 5 : 4}">${name}</td></tr>`; for (const r of rs) h += `<tr class="row${S.sel.includes('poi:' + r.name) ? ' sel' : ''}" data-id="poi:${esc(r.name)}" data-ll="${r.lat},${r.lon}"><td>${esc(r.name)}</td><td class="n">${swatch(r.mrms)}</td><td class="n">${swatchEst(r.an, r.ng)}</td><td class="nw">${r.ng ? `${esc(r.ng.g.id)} <b>${r.ng.g.total.toFixed(2)}"</b> <span class="muted">${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'}</span>` : '<span class="muted">—</span>'}</td>${S.hourly ? `<td class="n">${fin(r.pk)}</td>` : ''}</tr>`; }
+  h += '</tbody></table><div class="box small muted"><b>Neither column is a measurement at the site.</b> Radar estimate = MRMS for the 1-km cell over the site. Est. from nearby gauges (shown with ~ and a dashed outline) = a distance-weighted average of rain gauges within 10 km; blank when none is that close. Nearest gauge is an actual gauge reading, with its distance. Inches.</div>';
   $('tab-sites').innerHTML = h;
 }
 function renderGauges() {
@@ -687,7 +688,7 @@ function briefText() {
   return L2.join('\n');
 }
 function csvText() {
-  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'installation', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_in', 'gauge_analysis_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc', 'last_rain_recorded_utc']];
+  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`, rows = [['type', 'installation', 'id', 'name', 'lat', 'lon', 'gauge_total_in', 'last_1h_in', 'mrms_radar_estimate_in', 'interpolated_from_gauges_within_10km_in', 'peak_1h_mrms_in', 'flags', 'source', 'period_start_utc', 'period_end_utc', 'last_rain_recorded_utc']];
   const A = new Date(S.a).toISOString(), B = new Date(S.b).toISOString();
   for (const r of poiRows()) rows.push(['key site', AREAS.find(x => x[0] === siteArea(r))[1], r.name, POI_KIND[r.kind], r.lat, r.lon, '', '', r.mrms == null ? '' : r.mrms.toFixed(2), r.an == null ? '' : r.an.toFixed(2), r.pk == null ? '' : r.pk.toFixed(2), '', 'MRMS', A, B]);
   for (const g of [...S.gauges.values()].filter(g => g.total != null).sort((x, y) => y.total - x.total)) rows.push(['gauge', AREAS.find(x => x[0] === gaugeArea(g))[1], g.id, g.name, g.lat, g.lon, g.total.toFixed(2), g.last1 == null ? '' : g.last1.toFixed(2), g.mrms == null ? '' : g.mrms.toFixed(2), '', '', g.flags.map(f => f.k).join(' '), g.src, A, B, g.lastRain ? new Date(g.lastRain.t).toISOString() : '']);

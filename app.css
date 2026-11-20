@@ -79,3 +79,6 @@ body.brief .maps{height:calc(100vh - 250px);min-height:520px}body.brief .side{ma
 @media print{.range,.mapbar,.timeline,.tools,.tabs{display:none}.grid{grid-template-columns:1fr}.side{max-height:none}.tab{display:block!important}body{background:#fff}}
 
 .reportbar{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 14%,transparent);display:flex;gap:12px;align-items:center;flex-wrap:wrap}.reportbar a{color:var(--acc);font-weight:650}.reportbar.err{border-color:var(--crit);background:color-mix(in srgb,var(--crit) 14%,transparent)}
+
+.sw.est{background:transparent;border:1.5px dashed var(--line);font-style:italic;font-weight:600;color:var(--ink);padding:0 5px}
+th{line-height:1.25;vertical-align:bottom}

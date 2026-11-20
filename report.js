@@ -105,12 +105,14 @@ async function generateReport() {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   for (const b of bullets) { const lines = doc.splitTextToSize(b, rw - 12); doc.setFillColor(...ink); doc.circle(rx + 3, y + 7.5, 1.5, 'F'); doc.text(lines, rx + 11, y + 10.5); y += lines.length * 10.8 + 2.5; }
   y += 5;
-  const body = [];
+  const body = []; let estY = 0;
   for (const [k, name] of AREAS) { const rs = sites.filter(r => r.area === k); if (!rs.length) continue; body.push([{ content: name, colSpan: 5, styles: { fillColor: [232, 237, 242], textColor: [60, 72, 86], fontStyle: 'bold', fontSize: 7.5 } }]);
-    for (const r of rs) body.push([String(sites.indexOf(r) + 1), r.name, r.mrms == null ? '—' : r.mrms.toFixed(2), r.an == null ? '—' : r.an.toFixed(2), r.ng ? `${r.ng.g.id}  ${r.ng.g.total.toFixed(2)}"  (${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'})` : '—']); }
-  doc.autoTable({ ...base, startY: y, margin: { left: rx, right: M, bottom: 30 }, tableWidth: rw, head: [['#', 'Key site', 'Radar est. (in)', 'Gauges (in)', 'Nearest gauge']], body,
-    styles: { ...base.styles, fontSize: 7.6, cellPadding: { top: 1.7, bottom: 1.7, left: 4, right: 4 } }, columnStyles: { 0: { cellWidth: 18, halign: 'center' }, 2: { halign: 'center', cellWidth: 58 }, 3: { halign: 'center', cellWidth: 50 } }, didParseCell: d => shade(d, [2, 3]),
+    for (const r of rs) body.push([String(sites.indexOf(r) + 1), r.name, r.mrms == null ? '—' : r.mrms.toFixed(2), r.an == null ? '—' : '~' + r.an.toFixed(2), r.ng ? `${r.ng.g.id}  ${r.ng.g.total.toFixed(2)}"  (${r.ng.d < 0.3 ? 'on site' : r.ng.d.toFixed(0) + ' km'})` : '—']); }
+  doc.autoTable({ ...base, startY: y, margin: { left: rx, right: M, bottom: 30 }, tableWidth: rw, head: [['#', 'Key site', 'Radar estimate (in)', 'Est. from nearby gauges* (in)', 'Nearest gauge (measured)']], body,
+    styles: { ...base.styles, fontSize: 7.6, cellPadding: { top: 1.7, bottom: 1.7, left: 4, right: 4 } }, columnStyles: { 0: { cellWidth: 18, halign: 'center' }, 2: { halign: 'center', cellWidth: 54 }, 3: { halign: 'center', cellWidth: 62, fontStyle: 'italic', textColor: [70, 82, 96] } }, didParseCell: d => shade(d, [2]),
+    didDrawCell: d => { if (d.section === 'body' && d.column.index === 4 && d.row.index === body.length - 1) estY = d.cell.y + d.cell.height; },
     didDrawPage: d => { if (d.pageNumber > 1) header('Rainfall Summary — Key Sites (cont.)'); } });
+  if (estY && estY < PH - 44 && doc.getNumberOfPages() === 1) { doc.setFont('helvetica', 'italic'); doc.setFontSize(7); doc.setTextColor(...mut); doc.text(doc.splitTextToSize('* Not a measurement at the site: a distance-weighted average of rain gauges within 10 km (blank if none). Radar estimate is MRMS for the 1-km cell over the site.', rw), rx, estY + 10); }
 
   /* ── page 2: gauges by installation ── */
   doc.addPage(); header('Rainfall Summary — Gauges by Installation');
@@ -144,7 +146,7 @@ async function generateReport() {
   const bad = Object.keys(SRC).filter(k => S.src[k] && S.src[k].state === 'err'); if (bad.length) notes.push(`Not loaded: ${bad.map(k => SRC[k].split(' (')[0]).join('; ')}.`);
   notes.push('Installation grouping: key sites are assigned by name; archive gauges are assigned by position (east of the Banana River = Cape Canaveral SFS) and may be approximate near the boundary. Public gauges (USGS, CoCoRaHS, COOP) are listed under the surrounding area.');
   notes.push('Highest gauge and last-hour values by installation use gauges with complete data for the period; gauges that look offline and once-a-day gauges are left out.');
-  notes.push('Tipping-bucket gauges under-report in very heavy rain and wind. "Gauges" at key sites is a distance-weighted value from gauges within 10 km.');
+  notes.push('Tipping-bucket gauges under-report in very heavy rain and wind. "Est. from nearby gauges" at key sites is a distance-weighted average of gauges within 10 km, not a measurement at the site.');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...ink); doc.text('Notes', x2, yL); yL += 6; doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mut);
   for (const nt of notes) { const lines = doc.splitTextToSize(nt, colW - 4); if (yL + lines.length * 9.6 > PH - 30) break; doc.text(lines, x2, yL + 9); yL += lines.length * 9.6 + 4; }
   footer();
